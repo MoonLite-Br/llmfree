@@ -1,0 +1,16 @@
+"""Provider specs and adapters."""
+
+from __future__ import annotations
+
+from typing import Dict
+
+from .base import Adapter, Completion, ModelSpec, Options, ProviderSpec
+from .chatjimmy import ChatJimmyAdapter
+from .openai_compat import OpenAIAdapter
+
+ADAPTERS: Dict[str, Adapter] = {
+    "openai": OpenAIAdapter(),
+    "chatjimmy": ChatJimmyAdapter(),
+}
+
+__all__ = ["ADAPTERS", "Adapter", "Completion", "ModelSpec", "Options", "ProviderSpec"]

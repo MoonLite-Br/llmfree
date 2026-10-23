@@ -34,9 +34,9 @@ def _chat_url(url: str) -> str:
 
 
 def fetch_specs(timeout: float = 20.0, user_agent: str = _http.DEFAULT_UA,
-                url: str = STILLWORKS_URL) -> List[ProviderSpec]:
+                url: str = STILLWORKS_URL, proxy=None) -> List[ProviderSpec]:
     resp = _http.open_url(url, headers={"User-Agent": user_agent, "Accept": "application/json"},
-                          timeout=timeout)
+                          timeout=timeout, proxy=proxy)
     try:
         payload = json.loads(_http.decode_body(resp))
     finally:

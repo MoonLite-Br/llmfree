@@ -11,12 +11,13 @@ from typing import List, Optional
 from . import __version__, default_client
 from .errors import LLMFError
 
-COMMANDS = ("chat", "models", "providers", "health", "version")
+COMMANDS = ("chat", "models", "providers", "health", "version", "serve")
 
 HELP = """\
 usage: llmf [options] "question"          ask once (also reads stdin)
        llmf -i                            interactive chat
        llmf models | providers | health   inspect what is available
+       llmf serve [--port N]              local OpenAI-compatible server
 """
 
 
@@ -25,6 +26,7 @@ def _parser() -> argparse.ArgumentParser:
                                 description="Free, keyless LLMs behind one command.")
     p.add_argument("words", nargs="*", help="question, or one of: " + ", ".join(COMMANDS))
     p.add_argument("-m", "--model", help="model, alias (fast/best/code/vision/reasoning) or provider/model")
+    p.add_argument("-p", "--provider", help="provider name (see `llmf providers`); combine with -m")
     p.add_argument("-s", "--system", help="system prompt")
     p.add_argument("-i", "--interactive", action="store_true", help="interactive chat (REPL)")
     p.add_argument("--image", action="append", default=[], help="image path/URL (repeatable)")
@@ -34,6 +36,13 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--live", action="store_true", help="models: also query providers live")
     p.add_argument("--timeout", type=float)
+    p.add_argument("--proxy", help="http(s) proxy URL for all requests, e.g. http://127.0.0.1:8080")
+    p.add_argument("--host", default="127.0.0.1", help="serve: bind address (default 127.0.0.1)")
+    p.add_argument("--port", type=int, default=8000, help="serve: port (default 8000)")
+    p.add_argument("--api-key", help="serve: require this bearer key")
+    p.add_argument("--cors", action="store_true", help="serve: allow browser (CORS) access")
+    p.add_argument("--strict-models", action="store_true", help="serve: 404 on unknown model names")
+    p.add_argument("--no-fallback", action="store_true", help="serve: never switch model on failure")
     p.add_argument("-v", "--verbose", action="store_true", help="show provider/model used")
     p.add_argument("-V", "--version", action="version", version="llmf " + __version__)
     return p
@@ -45,7 +54,7 @@ def _read_stdin() -> str:
 
 def _ask(a, prompt, history: Optional[List[dict]] = None) -> str:
     c = default_client()
-    kw = dict(model=a.model, system=a.system, max_tokens=a.max_tokens, temperature=a.temperature)
+    kw = dict(model=a.model, provider=a.provider, system=a.system, max_tokens=a.max_tokens, temperature=a.temperature)
     if a.image:
         kw["images"] = a.image
     msgs = (history or []) + [{"role": "user", "content": prompt}]
@@ -103,6 +112,12 @@ def main(argv: Optional[List[str]] = None) -> int:
     c = default_client()
     if a.timeout:
         c.configure(timeout=a.timeout)
+    try:
+        if a.proxy:
+            c.configure(proxy=a.proxy)
+    except ValueError as e:
+        print("error: %s" % e, file=sys.stderr)
+        return 2
     cmd = a.words[0] if a.words and a.words[0] in COMMANDS and len(a.words) == 1 else None
     try:
         if cmd == "version":
@@ -122,6 +137,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                 tags = list(m.tags) + (["vision"] if m.vision and "vision" not in m.tags else [])
                 flags = ",".join(tags + ([] if m.verified else ["unverified"]))
                 print("%-60s %s" % (m.name, flags))
+        elif cmd == "serve":
+            from .server import serve
+            if a.model:
+                c.configure(model=a.model if not a.provider else "%s/%s" % (a.provider, a.model))
+            elif a.provider:
+                c.configure(model=a.provider)
+            serve(c, a.host, a.port, api_key=a.api_key, cors=a.cors,
+                  strict_models=a.strict_models, fallback=not a.no_fallback)
         elif cmd == "health":
             bad = 0
             for h in c.health():

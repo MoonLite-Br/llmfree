@@ -132,6 +132,22 @@ BUILTIN: List[ProviderSpec] = [
         ],
         note="Only verified indirectly (via stillworks).",
     ),
+    ProviderSpec(
+        name="chatai",
+        base_url="https://chatai.org",
+        chat_path="/api/chat",
+        kind="chatai",
+        default_model="openai/gpt-5.6-luna",
+        models=[
+            M("openai/gpt-5.6-luna"),
+            M("anthropic/claude-haiku-5.5"),
+            M("google/gemini-2.5-flash-lite"),
+            M("x-ai/grok-4", verified=False),
+            M("anthropic/claude-opus-5", verified=False),
+            M("google/gemini-3.1-pro", verified=False),
+        ],
+        note="Premium models but only ~3-5 requests/IP/day; last-resort in the chain.",
+    ),
 ]
 
 # Intent aliases -> ordered (provider, model) targets.

@@ -128,6 +128,17 @@ class Fallback(unittest.TestCase):
         self.assertGreaterEqual(time.monotonic() - t0, 0.25)
 
 
+class ProviderArg(unittest.TestCase):
+    def test_provider_kwarg(self):
+        c = llmf.Client(builtin=False)
+        c.register("a", BASE + "/v1", ["ok", "reasoning"])
+        c.register("b", BASE + "/v1", "ok")
+        self.assertEqual(c.chat("x", provider="a", model="reasoning").model, "reasoning")
+        self.assertEqual(c.chat("x", provider="b").provider, "b")
+        with self.assertRaises(ValueError):
+            c.chat("x", provider="a", model=["ok", "reasoning"])
+
+
 class Resolve(unittest.TestCase):
     def setUp(self):
         self.reg = llmf.Client()._reg
@@ -135,7 +146,7 @@ class Resolve(unittest.TestCase):
     def test_builtin_chain_matches_docs(self):
         names = [t.provider for t in self.reg.chain()]
         self.assertEqual(names, ["ovh", "kilo-openrouter", "chatjimmy", "kilo-gateway",
-                                 "pollinations", "llm7", "blockrun", "freeai"])
+                                 "pollinations", "llm7", "blockrun", "freeai", "chatai"])
 
     def test_tags_reference_real_models(self):
         for tag, targets in TAGS.items():
@@ -308,12 +319,115 @@ class CLI(unittest.TestCase):
         _, out, _ = self.run_cli(["hi", "--stream", "-m", "fake/ok"])
         self.assertEqual(out.strip(), "Hello world")
 
+    def test_provider_flag(self):
+        code, out, err = self.run_cli(["hi", "-p", "fake", "-m", "ok", "-v"])
+        self.assertEqual((code, out.strip()), (0, "Echo: hi"))
+        self.assertIn("[fake/ok]", err)
+        self.assertEqual(self.run_cli(["hi", "-p", "fake"])[0], 0)       # provider default model
+        self.assertEqual(self.run_cli(["hi", "-p", "nope"])[0], 1)       # unknown provider -> ...
+
+    def test_proxy_flag(self):
+        code, out, _ = self.run_cli(["hi", "--proxy", BASE])
+        self.assertEqual(code, 0)
+        code, _, err = self.run_cli(["hi", "--proxy", "socks5://1.2.3.4:1"])
+        self.assertEqual(code, 2)
+        self.assertIn("proxy must be", err)
+
     def test_commands_and_errors(self):
         self.assertEqual(self.run_cli(["providers"])[0], 0)
         self.assertIn("fake", self.run_cli(["models"])[1])
         code, _, err = self.run_cli(["hi", "-m", "nonexistent-zzz"])
         self.assertEqual(code, 1)
         self.assertIn("unknown model", err)
+
+
+class ChatAI(unittest.TestCase):
+    def setUp(self):
+        from llmf.providers import ADAPTERS
+        ADAPTERS["chatai"]._sessions.clear()
+
+    def cc(self, model="m"):
+        c = llmf.Client(builtin=False, deadline=10, retries=0)
+        c.register("chatai", BASE, model, kind="chatai", chat_path="/api/chat")
+        return c
+
+    def test_session_flow_and_reuse(self):
+        c = self.cc()
+        before = fakeserver.Handler.sessions
+        self.assertEqual(c.chat("hi"), "chatai ok")
+        self.assertEqual(c.chat("again"), "chatai ok")
+        self.assertEqual(fakeserver.Handler.sessions - before, 1)  # session cached
+        path, body, hdrs = fakeserver.Handler.calls[-1]
+        self.assertEqual(body, {"model": "m", "messages": [{"role": "user", "content": "again"}]})
+        self.assertEqual(hdrs["Origin"], BASE)
+
+    def test_stale_session_refreshes_once(self):
+        from llmf.providers import ADAPTERS
+        c = self.cc()
+        c.chat("hi")
+        for sess in ADAPTERS["chatai"]._sessions.values():
+            sess.csrf = "stale"
+        self.assertEqual(c.chat("hi"), "chatai ok")
+
+    def test_daily_limit_long_cooldown(self):
+        c = self.cc("limited")
+        with self.assertRaises(llmf.AllProvidersFailed) as cm:
+            c.chat("hi")
+        e = cm.exception.errors[0]
+        self.assertEqual((e.code, e.retryable), ("daily_limit", False))
+        self.assertGreaterEqual(e.cooldown, 3600)
+        self.assertEqual(len(cm.exception.errors), 1)
+
+    def test_builtin_spec(self):
+        spec = llmf.Client()._reg.providers["chatai"]
+        self.assertEqual(spec.chat_url, "https://chatai.org/api/chat")
+
+
+class Proxy(unittest.TestCase):
+    def test_requests_go_through_proxy(self):
+        c = llmf.Client(builtin=False, proxy=BASE, retries=0)
+        c.register("up", "http://upstream.invalid/v1", "ok")
+        self.assertEqual(c.chat("hi"), "Echo: hi")
+        self.assertTrue(fakeserver.Handler.calls[-1][0].startswith("http://upstream.invalid/"))
+
+    def test_per_call_proxy_and_no_auto(self):
+        c = llmf.Client(builtin=False, retries=0)
+        c.register("up", "http://upstream.invalid/v1", "ok")
+        self.assertEqual(c.chat("hi", proxy=BASE), "Echo: hi")
+        self.assertEqual("".join(c.stream("hi", proxy=BASE)), "Hello world")
+        with self.assertRaises(ValueError):
+            c.chat("hi", proxy="auto")
+        with self.assertRaises(ValueError):
+            llmf.Client(proxy="auto")
+
+    def test_rejects_socks(self):
+        with self.assertRaises(ValueError):
+            llmf.Client(proxy="socks5://1.2.3.4:1080")
+        with self.assertRaises(ValueError):
+            llmf.Client().configure(proxy="1.2.3.4:80")
+
+
+class Tools(unittest.TestCase):
+    def test_langchain_docs(self):
+        r = llmf.tools.ask_langchain_docs("How to create an agent?", backend=BASE)
+        self.assertEqual(r, "Use create_agent.")
+        self.assertFalse(r.off_topic)
+        self.assertEqual(r.usage, {"input_tokens": 9})
+
+    def test_off_topic_flag_not_raised(self):
+        r = llmf.tools.ask_langchain_docs("weather?", backend=BASE)
+        self.assertTrue(r.off_topic)
+
+    def test_token_cached(self):
+        llmf.tools.ask_langchain_docs("a", backend=BASE)
+        n = fakeserver.Handler.guests
+        llmf.tools.ask_langchain_docs("b", backend=BASE)
+        self.assertEqual(fakeserver.Handler.guests, n)
+
+    def test_expired_token_refreshes(self):
+        llmf.tools.ask_langchain_docs("a", backend=BASE)
+        llmf.tools._tokens[(BASE, None)] = ("old", time.monotonic())
+        self.assertEqual(llmf.tools.ask_langchain_docs("a", backend=BASE), "Use create_agent.")
 
 
 class Catalogue(unittest.TestCase):

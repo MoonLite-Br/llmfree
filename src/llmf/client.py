@@ -100,6 +100,15 @@ class Stream:
         return self.reply
 
 
+def _join(provider: Optional[str], model: ModelArg) -> ModelArg:
+    """``provider="ovh", model="qwen"`` -> ``"ovh/qwen"`` (provider alone -> its default)."""
+    if not provider:
+        return model
+    if model is not None and not isinstance(model, str):
+        raise ValueError("provider= cannot be combined with a list of models")
+    return "%s/%s" % (provider, model or "")
+
+
 class Client:
     """Configure once, call anywhere. All options have sensible defaults.
 
@@ -112,14 +121,16 @@ class Client:
         max_tokens: default answer budget (reasoning models need >= 200).
         only / exclude: restrict the providers that may be used.
         builtin: load the built-in provider catalogue.
+        proxy: optional ``http(s)://host:port`` proxy for every request (your own proxy).
     """
 
     def __init__(self, *, model: ModelArg = None, timeout: float = 60.0, deadline: float = 180.0,
                  max_attempts: int = 8, retries: int = 1, max_tokens: int = 1024,
                  temperature: Optional[float] = None, only: Optional[Sequence[str]] = None,
                  exclude: Sequence[str] = (), builtin: bool = True,
-                 user_agent: str = _http.DEFAULT_UA) -> None:
+                 user_agent: str = _http.DEFAULT_UA, proxy: Optional[str] = None) -> None:
         self.model = model
+        self.proxy = _http.check_proxy(proxy)
         self.timeout = timeout
         self.deadline = deadline
         self.max_attempts = max_attempts
@@ -137,6 +148,8 @@ class Client:
         for k, v in kw.items():
             if k.startswith("_") or not hasattr(self, k) or callable(getattr(self, k)):
                 raise TypeError("unknown setting %r" % k)
+            if k == "proxy":
+                v = _http.check_proxy(v)
             setattr(self, k, list(v) if k in ("only", "exclude") and v else v)
         return self
 
@@ -165,7 +178,7 @@ class Client:
     def discover(self, *, limit: int = 5) -> List[str]:
         """Pull live keyless endpoints from the stillworks API and register them."""
         try:
-            specs = fetch_specs(self.timeout, self.user_agent)[:limit]
+            specs = fetch_specs(self.timeout, self.user_agent, proxy=self.proxy)[:limit]
         except (_http.HTTPFailure, ValueError) as e:
             raise LLMFError("discovery failed: %s" % e) from None
         for s in specs:
@@ -197,7 +210,7 @@ class Client:
 
         def one(s: ProviderSpec) -> List[str]:
             try:
-                return ADAPTERS[s.kind].list_models(s, min(self.timeout, 20.0), self.user_agent)
+                return ADAPTERS[s.kind].list_models(s, min(self.timeout, 20.0), self.user_agent, self.proxy)
             except LLMFError as e:
                 log.debug("live models failed for %s: %s", s.name, e)
                 return []
@@ -227,7 +240,7 @@ class Client:
         return Options(max_tokens=max_tokens if max_tokens is not None else self.max_tokens,
                        temperature=temperature if temperature is not None else self.temperature,
                        top_p=top_p, stop=stop, json=json_mode, tools=tools, extra=extra,
-                       user_agent=self.user_agent)
+                       user_agent=self.user_agent, proxy=self.proxy)
 
     def _plan(self, model: ModelArg, fallback: Optional[bool], vision: bool) -> List[Target]:
         reg = self._reg
@@ -261,15 +274,18 @@ class Client:
         return messages, self._plan(model, fallback, bool(images))
 
     # ----------------------------------------------------------------- core: chat
-    def chat(self, prompt: Prompt, *, model: ModelArg = None, system: Optional[str] = None,
+    def chat(self, prompt: Prompt, *, model: ModelArg = None, provider: Optional[str] = None,
+             system: Optional[str] = None,
              images: Optional[Sequence[Any]] = None, max_tokens: Optional[int] = None,
              temperature: Optional[float] = None, top_p: Optional[float] = None,
              json: bool = False, tools: Optional[List[Any]] = None, fallback: Optional[bool] = None,
-             **extra: Any) -> Reply:
+             proxy: Optional[str] = None, **extra: Any) -> Reply:
         """Ask a question; returns a :class:`Reply` (a ``str``)."""
-        messages, plan = self._prepare(prompt, system, images, model, fallback)
+        messages, plan = self._prepare(prompt, system, images, _join(provider, model), fallback)
         stop = extra.pop("stop", None)
         opts = self._options(max_tokens, temperature, top_p, json, tools, extra, stop)
+        if proxy:
+            opts.proxy = _http.check_proxy(proxy)
         errors: List[ProviderError] = []
         attempts: List[Attempt] = []
         dead = set()
@@ -316,19 +332,22 @@ class Client:
         raise AllProvidersFailed(errors, note)
 
     # --------------------------------------------------------------- core: stream
-    def stream(self, prompt: Prompt, *, model: ModelArg = None, system: Optional[str] = None,
+    def stream(self, prompt: Prompt, *, model: ModelArg = None, provider: Optional[str] = None,
+               system: Optional[str] = None,
                images: Optional[Sequence[Any]] = None, max_tokens: Optional[int] = None,
                temperature: Optional[float] = None, top_p: Optional[float] = None,
                json: bool = False, tools: Optional[List[Any]] = None,
-               fallback: Optional[bool] = None, _on_done: Optional[Callable[[Reply], None]] = None,
-               **extra: Any) -> Stream:
+               fallback: Optional[bool] = None, proxy: Optional[str] = None,
+               _on_done: Optional[Callable[[Reply], None]] = None, **extra: Any) -> Stream:
         """Like :meth:`chat` but yields text chunks as they arrive.
 
         Fallback happens only *before* the first chunk; after that a failure raises.
         """
-        messages, plan = self._prepare(prompt, system, images, model, fallback)
+        messages, plan = self._prepare(prompt, system, images, _join(provider, model), fallback)
         stop = extra.pop("stop", None)
         opts = self._options(max_tokens, temperature, top_p, json, tools, extra, stop)
+        if proxy:
+            opts.proxy = _http.check_proxy(proxy)
 
         def gen(st: Stream) -> Iterator[str]:
             errors: List[ProviderError] = []

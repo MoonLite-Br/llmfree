@@ -58,6 +58,7 @@ class Options:
     tools: Optional[List[Any]] = None
     extra: Dict[str, Any] = field(default_factory=dict)
     user_agent: str = _http.DEFAULT_UA
+    proxy: Optional[str] = None
 
 
 @dataclass
@@ -86,6 +87,8 @@ def error_from_body(body: str) -> Tuple[Optional[str], str]:
         msg = err.get("message") or msg
     elif isinstance(err, str):
         msg = msg or err
+    if "daily limit" in str(msg or "").lower():
+        code = "daily_limit"
     debug = obj.get("debug")
     if debug and msg:
         msg = "%s (%s)" % (msg, debug)
@@ -125,7 +128,7 @@ class Adapter:
         raise NotImplementedError
 
     def list_models(self, spec: ProviderSpec, timeout: float,
-                    user_agent: str = _http.DEFAULT_UA) -> List[str]:
+                    user_agent: str = _http.DEFAULT_UA, proxy: Optional[str] = None) -> List[str]:
         """Live model ids (best effort). Default: OpenAI-style ``/models``."""
         if not spec.models_path:
             return []
@@ -134,7 +137,7 @@ class Adapter:
         headers.setdefault("User-Agent", user_agent)
         headers.setdefault("Accept", "application/json")
         with translate(spec, "(models)"):
-            resp = _http.open_url(url, headers=headers, timeout=timeout)
+            resp = _http.open_url(url, headers=headers, timeout=timeout, proxy=proxy)
             try:
                 payload = json.loads(_http.decode_body(resp))
             finally:

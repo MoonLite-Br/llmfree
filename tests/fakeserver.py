@@ -22,8 +22,20 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(data)
 
+    sessions = 0
+
     def do_GET(self):
-        if self.path.endswith("/models"):
+        if self.path == "/chat":
+            Handler.sessions += 1
+            html = '<html><head><meta name="csrf-token" content="TOK%d"></head></html>' % Handler.sessions
+            data = html.encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html")
+            self.send_header("Set-Cookie", "chataiorg_session=S%d; Path=/" % Handler.sessions)
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        elif self.path.endswith("/models"):
             self._send(200, json.dumps({"data": [
                 {"id": "a:free"}, {"id": "b"}, {"id": "paid", "billing_mode": "paid"}]}))
         else:
@@ -33,9 +45,45 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(n) or b"{}")
         Handler.calls.append((self.path, body, dict(self.headers)))
+        if self.path == "/api/chat" and "chatOptions" not in body:
+            return self._chatai(body)
         if self.path == "/api/chat":
             return self._jimmy(body)
+        if self.path == "/identity/guest":
+            Handler.guests = getattr(Handler, "guests", 0) + 1
+            return self._send(200, json.dumps({"token": "G%d" % Handler.guests}))
+        if self.path == "/threads":
+            return self._send(200, json.dumps({"thread_id": "t1"}))
+        if self.path.endswith("/runs/wait"):
+            return self._langchain(body)
         return self._openai(body)
+
+    # -- chatai: needs the cookie + matching CSRF header from GET /chat
+    def _chatai(self, body):
+        cookie = self.headers.get("Cookie", "")
+        tok = self.headers.get("X-CSRF-Token", "")
+        if not cookie.startswith("chataiorg_session=S") or tok != "TOK" + cookie.split("=S")[1][:1]:
+            return self._send(419, '{"message":"CSRF token mismatch"}')
+        if body["model"] == "limited":
+            return self._send(429, '{"error": "Free daily limit reached. Please try again tomorrow."}')
+        data = "".join("data: " + json.dumps({"choices": [{"delta": {"content": p}}]}) + "\n\n"
+                       for p in ("chat", "ai ", "ok")) + "data: [DONE]\n\n"
+        self._send(200, data, "text/event-stream")
+
+    # -- langchain docs agent
+    def _langchain(self, body):
+        if self.headers.get("Authorization") != "Bearer G%d" % getattr(Handler, "guests", 0):
+            return self._send(401, "{}")
+        q = body["input"]["messages"][0]["content"]
+        if "weather" in q:
+            msgs = [{"type": "ai", "content": "outside my scope"}]
+            return self._send(200, json.dumps({"messages": msgs, "off_topic_query": True}))
+        msgs = [{"type": "human", "content": q},
+                {"type": "ai", "content": "", "tool_calls": [{"name": "search"}]},
+                {"type": "tool", "content": "x"},
+                {"type": "ai", "content": [{"type": "text", "text": "Use create_agent."}],
+                 "usage_metadata": {"input_tokens": 9}}]
+        self._send(200, json.dumps({"messages": msgs}))
 
     # -- chatjimmy
     def _jimmy(self, body):

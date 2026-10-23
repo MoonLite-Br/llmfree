@@ -22,6 +22,10 @@ def _content_to_text(content: Any) -> str:
 
 
 class OpenAIAdapter(Adapter):
+    def _open(self, spec, url, headers, data, timeout, opts):
+        """Single place where requests are sent (subclasses may add session handling)."""
+        return _http.open_url(url, headers=headers, data=data, timeout=timeout, proxy=opts.proxy)
+
     def _request(self, spec: ProviderSpec, model: str, messages: List[dict],
                  opts: Options, stream: bool):
         body: dict = {"model": model, "messages": messages}
@@ -52,7 +56,7 @@ class OpenAIAdapter(Adapter):
     def complete(self, spec, model, messages, opts, timeout) -> Completion:
         url, headers, data = self._request(spec, model, messages, opts, False)
         with translate(spec, model):
-            resp = _http.open_url(url, headers=headers, data=data, timeout=timeout)
+            resp = self._open(spec, url, headers, data, timeout, opts)
             try:
                 text = _http.decode_body(resp)
             finally:
@@ -91,7 +95,7 @@ class OpenAIAdapter(Adapter):
     def stream(self, spec, model, messages, opts, timeout) -> Iterator[str]:
         url, headers, data = self._request(spec, model, messages, opts, True)
         with translate(spec, model):
-            resp = _http.open_url(url, headers=headers, data=data, timeout=timeout)
+            resp = self._open(spec, url, headers, data, timeout, opts)
         try:
             splitter = ThinkSplitter()
             lines = iter(resp)

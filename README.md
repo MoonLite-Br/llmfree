@@ -1,136 +1,165 @@
-# llmf (llmfree)
+# llmf
 
-**Một cú gọi duy nhất cho các LLM miễn phí, không cần API key.**
-Không đăng ký, không khai báo nhà cung cấp, không phụ thuộc thư viện ngoài (chỉ Python stdlib, chạy tốt trên Termux).
+**Free, keyless LLM chat in one call.**
+
+[![PyPI](https://img.shields.io/pypi/v/llmf.svg)](https://pypi.org/project/llmf/)
+[![Python](https://img.shields.io/pypi/pyversions/llmf.svg)](https://pypi.org/project/llmf/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
+`llmf` (llmfree) talks to public, no-key OpenAI-compatible endpoints, picks a live one, and **falls back automatically** when something fails. Zero third-party dependencies — stdlib only. Works on desktop, server, and **Termux**.
 
 ```python
 import llmf
 
-print(llmf.chat("Xin chào, bạn là ai?"))
+print(llmf.chat("Hello — who are you?"))
 ```
 
-Chỉ vậy thôi. `llmf` tự chọn endpoint đang sống, tự chuyển sang nhà cung cấp khác khi lỗi, và luôn trả về cùng một kiểu dữ liệu.
+No API keys. No provider setup. Same return type every time.
 
-## Cài đặt
+---
+
+## Install
 
 ```bash
-pip install llmf
+pip install -U llmf
 ```
 
-Yêu cầu Python ≥ 3.8. Không có dependency.
-
-## Cú pháp thống nhất
-
-Mọi nhà cung cấp, mọi model đều dùng **cùng một hàm, cùng tham số**:
-
-```python
-llmf.chat("câu hỏi")                                   # tự động chọn + fallback
-llmf.chat("câu hỏi", model="best")                     # theo mục đích: fast | best | code | vision | reasoning
-llmf.chat("câu hỏi", model="llama")                    # gõ tên gần đúng, không phân biệt hoa/thường
-llmf.chat("câu hỏi", model="ovh/Qwen3.5-397B-A17B")    # chỉ định đích danh: nhà_cung_cấp/model
-llmf.chat("câu hỏi", model=["best", "fast"])           # thử lần lượt
-
-llmf.chat("...", system="Trả lời ngắn gọn", max_tokens=300, temperature=0.3)
-llmf.chat("Mô tả ảnh này", images=["anh.jpg"])         # ảnh: đường dẫn / URL / bytes
-llmf.chat("Trả JSON", json=True)
-llmf.chat([{"role": "user", "content": "hi"}])         # hoặc danh sách messages kiểu OpenAI
-```
-
-Kết quả là `Reply` – **một `str`** kèm metadata:
-
-```python
-r = llmf.chat("2+2=?")
-print(r)             # "4"  (đã strip, đã bỏ phần reasoning)
-r.provider, r.model  # ai đã trả lời
-r.reasoning          # chain-of-thought nếu có (không lẫn vào câu trả lời)
-r.usage, r.latency, r.attempts
-```
-
-### Streaming, hội thoại, async
-
-```python
-for piece in llmf.stream("Đếm từ 1 đến 10"):
-    print(piece, end="", flush=True)
-
-s = llmf.session(system="Bạn là trợ lý ngắn gọn")   # nhớ lịch sử
-s("Tên tôi là An")
-print(s("Tên tôi là gì?"))
-
-reply = await llmf.achat("hi")                       # async
-async for piece in llmf.astream("hi"): ...
-```
-
-Streaming chỉ fallback **trước khi** có chunk đầu tiên; sau đó lỗi sẽ được raise.
-
-## Dòng lệnh
+Requires **Python ≥ 3.8**.
 
 ```bash
-llmf "Giải thích GIL trong Python"
-cat code.py | llmf "Review đoạn code này" -m code
-llmf -i                      # chat tương tác (/reset, /exit)
-llmf --stream "kể chuyện cười"
-llmf models                  # danh sách model (--live: hỏi trực tiếp từng nhà cung cấp)
+python -c "import llmf; print(llmf.__version__)"
+llmf version
+```
+
+---
+
+## Quick start
+
+```python
+import llmf
+
+# Auto provider + model
+llmf.chat("Summarize the CAP theorem in two sentences.")
+
+# Intent shortcuts: fast | best | code | vision | reasoning
+llmf.chat("Write a Python fibonacci function", model="code")
+
+# Fuzzy or explicit model ids
+llmf.chat("hi", model="llama")
+llmf.chat("hi", model="ovh/Meta-Llama-3.3-70B-Instruct")
+
+# Try models in order
+llmf.chat("hi", model=["best", "fast"])
+
+# Options
+llmf.chat(
+    "Return a JSON object with keys name and age",
+    system="You only output valid JSON",
+    max_tokens=300,
+    temperature=0.2,
+    json=True,
+)
+
+# Images (path, URL, or bytes)
+llmf.chat("Describe this image", images=["photo.jpg"], model="vision")
+
+# Streaming
+for chunk in llmf.stream("Count from 1 to 5"):
+    print(chunk, end="", flush=True)
+```
+
+`chat()` returns a **`Reply`**: behaves like a `str`, plus metadata (provider, model, attempts, …).
+
+---
+
+## CLI
+
+```bash
+llmf "Your prompt here"
+llmf chat "Explain recursion" --model best
+llmf models              # built-in catalog
+llmf models --live       # probe providers (network)
 llmf providers
-llmf health                  # kiểm tra endpoint nào đang sống
-python -m llmf "hi"
+llmf health
+llmf version
 ```
 
-## Nó hoạt động thế nào
-
-- **Chuỗi fallback** theo thứ tự nhanh/sạch nhất: `ovh → kilo-openrouter → chatjimmy → kilo-gateway → pollinations → llm7 → blockrun → freeai`.
-- Endpoint vừa lỗi bị **hạ ưu tiên (cooldown)** một lúc; lỗi 429 thì 60 giây.
-- Pollinations bị giới hạn 1 request/15s nên tự được **giãn nhịp** và xếp cuối.
-- **Làm sạch đầu ra**: bỏ `reasoning`, tách `<think>…</think>`, strip `\n\n`, bóc khối `<|stats|>` của ChatJimmy, coi câu trả lời rỗng / lỗi giấu trong HTTP 200 là thất bại để chuyển nhà khác.
-- `max_tokens` mặc định 1024 (model reasoning cần ≥ 200, nếu không `content` sẽ rỗng).
-- Không retry vô ích: lỗi tạm thời (mạng, 5xx, timeout) thử lại 1 vòng; 4xx / 429 thì bỏ qua đích đó.
-
-Khi tất cả đều thất bại sẽ có `llmf.AllProvidersFailed` với danh sách `.errors` chi tiết từng nơi.
-
-## Tuỳ biến (không bắt buộc)
-
-```python
-llmf.configure(timeout=30, exclude=["blockrun"])      # hoặc only=["ovh", "llm7"]
-
-# Thêm endpoint OpenAI-compatible của riêng bạn
-llmf.register("lab", "http://localhost:11434/v1", ["llama3"], front=True)
-
-# Endpoint hardcode bị chết? Lấy danh sách còn sống từ stillworks (opt-in)
-llmf.discover()
-
-c = llmf.Client(timeout=20)       # client độc lập, không dùng chung trạng thái
-```
-
-Biến môi trường: `LLMF_MODEL`, `LLMF_TIMEOUT`. Debug: `logging.getLogger("llmf").setLevel("DEBUG")`.
-
-## Lưu ý quan trọng
-
-- Đây là các endpoint **công khai, miễn phí, không chính thức**. Chúng có thể đổi, chậm, giới hạn hoặc biến mất bất cứ lúc nào – danh sách trong gói được xác minh ngày 2026-10-22. Hãy dùng `llmf health` và `llmf.discover()`.
-- **Đừng gửi dữ liệu nhạy cảm** (mật khẩu, khoá, dữ liệu cá nhân): prompt đi tới máy chủ bên thứ ba ẩn danh, và `discover()` còn dùng endpoint của người lạ.
-- Tôn trọng ToS và rate limit của từng dịch vụ; không spam. Dùng thương mại cần đọc điều khoản.
-- `llmf` không liên kết với bất kỳ nhà cung cấp nào.
-- Streaming trên phần lớn nhà cung cấp chưa được kiểm chứng trên endpoint thật (nếu họ không hỗ trợ, llmf nhận cả câu trả lời rồi trả một lần).
-
-## Phát triển
+Local OpenAI-compatible proxy (stdlib HTTP server):
 
 ```bash
-git clone https://github.com/MoonLite-Br/llmfree && cd llmf
-python -m unittest discover -s tests -v      # test chạy offline với server giả lập
+llmf serve --port 8000
+# then: curl http://127.0.0.1:8000/v1/models
 ```
 
-Cấu trúc:
+Defaults to `127.0.0.1` only. Use `--host 0.0.0.0` only with `--api-key`. Use `--cors` if a browser extension must call it.
 
-```
-src/llmf/
-  client.py        Client, Session, Stream: fallback, cooldown, rate-limit
-  registry.py      danh mục provider + phân giải tên model (alias/fuzzy)
-  providers/       builtin.py (catalogue), openai_compat.py, chatjimmy.py
-  _messages.py     str/messages/ảnh -> messages chuẩn
-  _think.py        tách <think> (hỗ trợ streaming)
-  cli.py           lệnh `llmf`
+---
+
+## API surface
+
+| Function | Purpose |
+|----------|---------|
+| `llmf.chat(...)` | One-shot completion → `Reply` |
+| `llmf.stream(...)` | Token stream |
+| `llmf.achat` / `llmf.astream` | Async wrappers |
+| `llmf.session(system=...)` | Multi-turn conversation helper |
+| `llmf.models(live=False)` | List models |
+| `llmf.providers()` | List providers |
+| `llmf.health()` | Quick liveness checks |
+| `llmf.register(...)` | Add your own OpenAI-compatible base URL |
+| `llmf.discover()` | Opt-in scan for extra keyless endpoints |
+| `llmf.configure(...)` | Timeout, proxy, include/exclude providers |
+| `llmf.Client(...)` | Isolated client (no shared state) |
+
+Environment (optional):
+
+| Variable | Effect |
+|----------|--------|
+| `LLMF_TIMEOUT` | Default request timeout (seconds) |
+| `LLMF_PROXY` | HTTP(S) proxy for all requests |
+| `LLMF_MODEL` | Default model preference |
+
+```python
+llmf.configure(timeout=30, exclude=["blockrun"])
+llmf.configure(proxy="http://127.0.0.1:8080")
+llmf.register("lab", "http://localhost:11434/v1", ["llama3"], front=True)
 ```
 
-Thêm nhà cung cấp mới tương thích OpenAI chỉ cần thêm một `ProviderSpec` vào `providers/builtin.py`.
+---
+
+## How fallback works
+
+1. Prefer endpoints that are fast and clean in practice.
+2. On failure, cool down that target (e.g. longer after HTTP 429).
+3. Strip thinking / stats noise; treat empty “success” bodies as failures.
+4. If every target fails → `llmf.AllProvidersFailed` with per-provider `.errors`.
+
+Built-in providers (availability changes over time): ChatJimmy, OVH, FreeAI, LLM7, Kilo/OpenRouter gateway, BlockRun, Pollinations, ChatAI, and others registered in the package. Always verify with `llmf health` / `llmf models --live`.
+
+---
+
+## Safety notes
+
+- These are **public, unofficial, free** endpoints. They can rate-limit, change, or disappear without notice.
+- **Do not send secrets**, passwords, or personal data — prompts go to third-party servers.
+- `discover()` contacts external catalogs; treat it as opt-in.
+- Default local server binds to localhost and disables CORS on purpose.
+
+---
+
+## Development
+
+```bash
+git clone https://github.com/MoonLite-Br/llmfree.git
+cd llmfree
+python -m unittest discover -s tests -v
+python -m build && twine check dist/*
+```
+
+---
 
 ## License
 
-MIT
+MIT — see [LICENSE](LICENSE).
+
+**PyPI:** [pypi.org/project/llmf](https://pypi.org/project/llmf/) · **Source:** [github.com/MoonLite-Br/llmfree](https://github.com/MoonLite-Br/llmfree)

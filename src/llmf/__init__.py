@@ -12,6 +12,7 @@ import os
 import threading
 from typing import Any, List, Optional
 
+from . import tools
 from ._version import __version__
 from .client import Client, Session, Stream
 from .errors import AllProvidersFailed, LLMFError, ModelNotFound, ProviderError
@@ -29,6 +30,8 @@ def default_client() -> Client:
             kw: dict = {}
             if os.environ.get("LLMF_TIMEOUT"):
                 kw["timeout"] = float(os.environ["LLMF_TIMEOUT"])
+            if os.environ.get("LLMF_PROXY"):
+                kw["proxy"] = os.environ["LLMF_PROXY"]
             if os.environ.get("LLMF_MODEL"):
                 kw["model"] = os.environ["LLMF_MODEL"]
             _default = Client(**kw)
@@ -82,6 +85,6 @@ def configure(**kw: Any) -> Client:
 __all__ = [
     "__version__", "Client", "Session", "Stream", "Reply", "chat", "stream", "achat", "astream",
     "session", "models", "providers", "health", "register", "discover", "configure",
-    "default_client", "LLMFError", "ProviderError", "AllProvidersFailed", "ModelNotFound",
+    "default_client", "tools", "LLMFError", "ProviderError", "AllProvidersFailed", "ModelNotFound",
     "Attempt", "HealthResult", "ModelInfo", "ProviderInfo",
 ]

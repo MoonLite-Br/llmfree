@@ -60,6 +60,8 @@ _TRANSIENT_CODES = {"FREE_MODEL_FAILED"}
 
 def _classify(status: Optional[int], code: Optional[str]):
     """Return ``(retryable, scope, cooldown_seconds)`` for an error."""
+    if code == "daily_limit":  # free daily quota used up: do not bother again for hours
+        return False, "provider", 6 * 3600.0
     if status == 429 or (code or "") in _RATE_CODES:
         return False, "provider", 60.0
     if status is None:  # network / timeout / unparsable

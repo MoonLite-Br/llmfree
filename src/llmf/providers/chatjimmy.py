@@ -56,7 +56,7 @@ class ChatJimmyAdapter(Adapter):
     def complete(self, spec, model, messages, opts, timeout) -> Completion:
         url, headers, data = self._request(spec, model, messages, opts, False)
         with translate(spec, model):
-            resp = _http.open_url(url, headers=headers, data=data, timeout=timeout)
+            resp = _http.open_url(url, headers=headers, data=data, timeout=timeout, proxy=opts.proxy)
             try:
                 raw = _http.decode_body(resp)
             finally:
@@ -71,7 +71,7 @@ class ChatJimmyAdapter(Adapter):
     def stream(self, spec, model, messages, opts, timeout) -> Iterator[str]:
         url, headers, data = self._request(spec, model, messages, opts, True)
         with translate(spec, model):
-            resp = _http.open_url(url, headers=headers, data=data, timeout=timeout)
+            resp = _http.open_url(url, headers=headers, data=data, timeout=timeout, proxy=opts.proxy)
         decoder = codecs.getincrementaldecoder("utf-8")("replace")
         buf = ""          # not-yet-emitted text
         holding = False   # a stats sentinel was seen; everything after is held
@@ -110,9 +110,6 @@ class ChatJimmyAdapter(Adapter):
             yield tail.rstrip() if holding else tail
         elif not started:
             raise ProviderError(spec.name, model, "empty answer", status=200, code="empty")
-
-    def list_models(self, spec, timeout, user_agent=_http.DEFAULT_UA) -> List[str]:
-        return super().list_models(spec, timeout, user_agent)
 
 
 def _plain(message: dict) -> dict:

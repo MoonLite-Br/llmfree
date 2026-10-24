@@ -1,6 +1,22 @@
 # Changelog
 
+## 0.4.0
+- Errors: 429 is now split into plain rate-limit (provider sleeps 60 s), capacity / `ResourceExhausted`
+  (only that model sleeps 10 min) and "use a paid model" (model sleeps hours).
+- `models.check()` / `llmf doctor --all` / `models.list(live=True)` are chat-only and free-only by default:
+  guard/safety, whisper/tts/embedding/image/video/OCR and priced models are skipped
+  (`include_non_chat=True` / `--include-non-chat` to override).
+- New `vision_timeout` (default 90 s) used for requests with images and for vision models in `doctor`.
+- `fast` tag is dynamic: models measured <= 1 s join it, ordered by latency; failing ones sink. Static order
+  refreshed from measurements (llm7 minimax-m2.7 / codestral, chatjimmy, ...); `best` leads with nemotron-3-ultra.
+- Catalogue: llm7 gets `gpt-oss:20b`, `minimax-m2.7`, `codestral-latest`; blockrun `cohere/north-mini-code` marked broken.
+
 ## 0.3.0
+- `freeai` rewritten from live evidence: models `qwen7b` / `qwen-coder` / `deepseek-r1`, moved up the chain;
+  `/v1/models` is read from the `models` key and paid (non-self-hosted) models are ignored;
+  `premium_requires_purchase` errors put the model to sleep for hours.
+- Explicit `proxy=` is no longer bypassed by the `no_proxy` environment variable; proxy credentials in the URL are sent.
+- Added `live_test.py`: end-to-end check of everything against the real internet, with a JSON report.
 - **API**: OpenAI-shaped `LLMF().chat.completions.create(...)` returning `ChatCompletion` / `ChatStream`
   (`choices[0].message.content`, `usage`, `output_text`); `llm.models.list/check/resolve`,
   `llm.providers.list`, `llm.health.check`. The old shorthand (`llmf.chat("hi")`) still works.

@@ -65,7 +65,7 @@ class SDKSyntax(unittest.TestCase):
         llmf.default_client()  # create
         self.assertTrue(callable(llmf.chat))
         self.assertTrue(hasattr(llmf.chat, "completions"))
-        self.assertEqual(llmf.models.resolve("fast")[0], "chatjimmy/llama3.1-8B")
+        self.assertEqual(llmf.models.resolve("fast")[0], "llm7/minimax-m2.7")
         self.assertEqual(llmf.LLMF, llmf.Client)
 
 
@@ -73,15 +73,19 @@ class Catalogue(unittest.TestCase):
     def test_broken_models_never_chosen_automatically(self):
         reg = llmf.Client(use_cache=False)._reg
         with self.assertRaises(llmf.ModelNotFound):
-            reg.resolve("minimax")                      # only broken match -> not found
-        self.assertNotIn("minimax", " ".join(map(str, reg.tag("fast"))))
+            reg.resolve("nemotron-3-super")             # only broken match -> not found
+        self.assertNotIn("m3.1", " ".join(map(str, reg.tag("fast"))))
+        self.assertNotIn("north-mini-code", " ".join(str(t) for t in reg.tag("code") if t.provider == "blockrun"))
         # still reachable explicitly
         self.assertEqual(reg.resolve("kilo-openrouter/minimax/minimax-m3.1-flash:free")[0].model,
                          "minimax/minimax-m3.1-flash:free")
 
     def test_fast_tag_follows_measurements(self):
         reg = llmf.Client(use_cache=False)._reg
-        self.assertEqual([t.provider for t in reg.tag("fast")][:2], ["chatjimmy", "ovh"])
+        self.assertEqual([str(t.model) for t in reg.tag("fast")][:3],
+                         ["minimax-m2.7", "codestral-latest", "llama3.1-8B"])
+        self.assertEqual(reg.tag("best")[0].model, "nvidia/nemotron-3-ultra-550b-a55b:free")
+        self.assertNotIn("Meta-Llama-3_3-70B-Instruct", [t.model for t in reg.tag("fast")])
 
 
 class Doctor(unittest.TestCase):
@@ -192,6 +196,112 @@ class Routing(unittest.TestCase):
         with self.assertRaises(llmf.AllProvidersFailed) as cm:
             c.chat("hi", race=2)
         self.assertEqual(len(cm.exception.errors), 2)
+
+
+class ErrorKinds(unittest.TestCase):
+    def kind(self, status, msg, code=None):
+        e = llmf.ProviderError("p", "m", msg, status=status, code=code)
+        return e.retryable, e.scope, e.cooldown
+
+    def test_plain_rate_limit_vs_capacity_vs_paid(self):
+        self.assertEqual(self.kind(429, "slow down"), (False, "provider", 60.0))
+        self.assertEqual(self.kind(429, "ResourceExhausted: capacity"), (False, "model", 600.0))
+        self.assertEqual(self.kind(200, "no capacity right now"), (False, "model", 600.0))
+        r, scope, cd = self.kind(429, "use a paid model")
+        self.assertEqual((r, scope), (False, "model"))
+        self.assertGreaterEqual(cd, 3600)
+        self.assertEqual(self.kind(500, "boom")[:2], (True, "provider"))
+
+    def test_capacity_on_one_model_does_not_sideline_the_provider(self):
+        c = LLMF(builtin=False, retries=0, use_cache=False)
+        c.register("p", BASE + "/v1", ["err429cap", "ok"])
+        r = c.chat("hi", model=["p/err429cap", "p/ok"])
+        self.assertEqual((r.model, r.attempts[0].ok), ("ok", False))
+        self.assertGreater(c._state.ready_in(llmf.client.Target("p", "err429cap"), 0), 300)
+        self.assertEqual(c._state.ready_in(llmf.client.Target("p", "ok"), 0), 0)
+
+    def test_paid_model_429_sleeps_for_hours(self):
+        c = LLMF(builtin=False, retries=0, use_cache=False)
+        c.register("p", BASE + "/v1", ["err429paid", "ok"])
+        c.chat("hi", model=["p/err429paid", "p/ok"])
+        self.assertGreater(c._state.ready_in(llmf.client.Target("p", "err429paid"), 0), 3600)
+
+
+class ChatOnlyAndFree(unittest.TestCase):
+    def setUp(self):
+        self.c = LLMF(builtin=False, use_cache=False)
+        self.c.register("fake", BASE, "x", chat_path="/v1/chat/completions")
+        self.c._reg.providers["fake"].models_path = "/v1/models"
+
+    def test_live_list_skips_non_chat_guard_and_paid(self):
+        ids = [m.id for m in self.c.models.list(live=True)]
+        self.assertEqual(ids, ["x", "a:free", "b"])
+        ids = [m.id for m in self.c.models.list(live=True, include_non_chat=True)]
+        self.assertIn("whisper-large-v3", ids)
+        self.assertIn("Qwen3Guard-8B", ids)
+        self.assertNotIn("paid", ids)
+        self.assertNotIn("priced", ids)
+
+    def test_doctor_all_tests_only_chat_ids_by_default(self):
+        names = {r.model for r in self.c.models.check(include_live=True)}
+        self.assertEqual(names, {"x", "a:free", "b"})
+        names = {r.model for r in self.c.models.check(include_live=True, include_non_chat=True)}
+        self.assertIn("whisper-large-v3", names)
+
+    def test_heuristics(self):
+        from llmf.providers.base import is_chat_model
+        for bad in ("whisper-large-v3", "Qwen3Guard-8B", "nvidia/nemotron-3.5-content-safety:free", "kokoro-tts",
+                    "text-embedding-3-small", "flux-dev", "voxtral-mini", "kling-v2", "seedance-1"):
+            self.assertFalse(is_chat_model(bad), bad)
+        for good in ("gpt-oss:20b", "Qwen3.5-397B-A17B", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+                     "deepseek-r1", "qwen-vl"):
+            self.assertTrue(is_chat_model(good), good)
+        self.assertFalse(is_chat_model("x", {"architecture": {"output_modalities": ["image"]}}))
+        self.assertFalse(is_chat_model("x", {"categories": ["audio"]}))
+        self.assertTrue(is_chat_model("x", {"categories": ["coding"]}))
+
+
+class VisionTimeout(unittest.TestCase):
+    def test_images_get_the_longer_timeout(self):
+        c = LLMF(builtin=False, retries=0, use_cache=False, timeout=0.5, vision_timeout=5, deadline=20)
+        c.register("p", BASE + "/v1", "slow", vision=True)
+        with self.assertRaises(llmf.AllProvidersFailed):
+            c.chat("hi")                                      # text: 0.5 s timeout < 1.2 s server delay
+        r = c.chat("describe", images=["https://x/y.png"])    # vision: 5 s
+        self.assertEqual(r.provider, "p")
+
+    def test_doctor_gives_vision_models_longer(self):
+        c = LLMF(builtin=False, use_cache=False)
+        c.register("p", BASE + "/v1", "slow", vision=True)
+        res = c.models.check(timeout=0.5, vision_timeout=5)
+        self.assertTrue(res[0].ok)
+        res = c.models.check(timeout=0.5, vision_timeout=0.5)
+        self.assertFalse(res[0].ok)
+
+
+class DynamicFast(unittest.TestCase):
+    def test_fast_follows_measurements(self):
+        c = LLMF(use_cache=False)
+        T = llmf.client.Target
+        c._state.ok(T("ovh", "Qwen3.5-9B"), 0.25)             # not in the static tag, but measured quick
+        c._state.ok(T("llm7", "minimax-m2.7"), 0.9)
+        c._state.ok(T("chatjimmy", "llama3.1-8B"), 0.1)
+        plan = c._plan("fast", None, False)
+        self.assertEqual([t.model for t in plan[:3]], ["llama3.1-8B", "Qwen3.5-9B", "minimax-m2.7"])
+
+    def test_slow_measurement_is_not_added_and_failures_sink(self):
+        c = LLMF(use_cache=False)
+        T = llmf.client.Target
+        c._state.ok(T("ovh", "Qwen3.5-9B"), 9.0)               # slow -> must not join "fast"
+        c._state.seed([{"provider": "llm7", "model": "minimax-m2.7", "ok": False, "latency": 0}])
+        plan = c._plan("fast", None, False)
+        self.assertNotIn(T("ovh", "Qwen3.5-9B"), plan)
+        self.assertEqual(plan[-1], T("llm7", "minimax-m2.7"))  # demoted: tried last
+
+    def test_other_tags_stay_static(self):
+        c = LLMF(use_cache=False)
+        c._state.ok(llmf.client.Target("ovh", "Qwen3.5-9B"), 0.1)
+        self.assertEqual(c._plan("best", None, False)[0].model, "nvidia/nemotron-3-ultra-550b-a55b:free")
 
 
 class Startup(unittest.TestCase):

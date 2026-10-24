@@ -1,4 +1,5 @@
 import asyncio
+import json
 import contextlib
 import io
 import os
@@ -145,8 +146,8 @@ class Resolve(unittest.TestCase):
 
     def test_builtin_chain_matches_docs(self):
         names = [t.provider for t in self.reg.chain()]
-        self.assertEqual(names, ["ovh", "kilo-openrouter", "chatjimmy", "kilo-gateway",
-                                 "pollinations", "llm7", "blockrun", "freeai", "chatai"])
+        self.assertEqual(names, ["ovh", "kilo-openrouter", "freeai", "chatjimmy", "kilo-gateway",
+                                 "pollinations", "llm7", "blockrun", "chatai"])
 
     def test_tags_reference_real_models(self):
         for tag, targets in TAGS.items():
@@ -155,7 +156,7 @@ class Resolve(unittest.TestCase):
 
     def test_alias_fuzzy_prefix(self):
         r = self.reg.resolve
-        self.assertEqual(r("fast")[0].provider, "chatjimmy")
+        self.assertEqual(r("fast")[0].provider, "llm7")
         self.assertEqual(r("Llama")[0].model, "Meta-Llama-3_3-70B-Instruct")
         self.assertEqual([t.provider for t in r("gpt-oss")], ["pollinations", "llm7", "ovh"])
         self.assertEqual(r("ovh")[0].model, "Meta-Llama-3_3-70B-Instruct")
@@ -163,6 +164,7 @@ class Resolve(unittest.TestCase):
         self.assertEqual(r("ovh/brand-new")[0].model, "brand-new")  # pass-through
         self.assertEqual(len(r("kilo")), 2)
         self.assertEqual(r("r1")[0].provider, "freeai")
+        self.assertEqual(r("freeai")[0].model, "qwen7b")
 
     def test_unknown_suggests(self):
         with self.assertRaises(llmf.ModelNotFound) as cm:
@@ -400,6 +402,30 @@ class Proxy(unittest.TestCase):
         with self.assertRaises(ValueError):
             llmf.Client(proxy="auto")
 
+    def test_explicit_proxy_ignores_no_proxy_env(self):
+        old = os.environ.get("no_proxy"), os.environ.get("NO_PROXY")
+        os.environ["no_proxy"] = os.environ["NO_PROXY"] = "*"
+        try:
+            c = llmf.Client(builtin=False, proxy=BASE, retries=0, use_cache=False)
+            c.register("up", "http://upstream.invalid/v1", "ok")
+            self.assertEqual(c.chat("hi"), "Echo: hi")
+            c2 = llmf.Client(builtin=False, retries=0, use_cache=False)  # no explicit proxy: env wins
+            c2.register("loc", BASE + "/v1", "ok")
+            self.assertEqual(c2.chat("hi"), "Echo: hi")
+        finally:
+            for k, v in zip(("no_proxy", "NO_PROXY"), old):
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+
+    def test_proxy_basic_auth_header(self):
+        c = llmf.Client(builtin=False, proxy="http://bob:pw@" + BASE[7:], retries=0, use_cache=False)
+        c.register("up", "http://upstream.invalid/v1", "ok")
+        c.chat("hi")
+        hdrs = {k.lower(): v for k, v in fakeserver.Handler.calls[-1][2].items()}
+        self.assertTrue(hdrs["proxy-authorization"].startswith("Basic "))
+
     def test_rejects_bad_proxy(self):
         with self.assertRaises(ValueError):
             llmf.Client().configure(proxy="1.2.3.4:80")
@@ -488,6 +514,26 @@ class Tools(unittest.TestCase):
         llmf.tools.ask_langchain_docs("a", backend=BASE)
         llmf.tools._tokens[(BASE, None)] = ("old", time.monotonic())
         self.assertEqual(llmf.tools.ask_langchain_docs("a", backend=BASE), "Use create_agent.")
+
+
+class FreeAI(unittest.TestCase):
+    def test_models_listing_only_self_hosted_under_models_key(self):
+        from llmf.providers.base import parse_model_list
+        payload = {"caller_country": "VN", "total": 3, "models": [
+            {"id": "qwen7b", "self_hosted": True}, {"id": "deepseek-r1", "self_hosted": True},
+            {"id": "google/gemma-3-4b-it", "self_hosted": False, "provider": "openrouter"}]}
+        self.assertEqual(parse_model_list(payload), ["qwen7b", "deepseek-r1"])
+
+    def test_premium_error_shape(self):
+        from llmf.providers.base import error_from_body
+        body = json.dumps({"error": {"error": "Premium models run on a paid provider...",
+                                     "code": "premium_requires_purchase"}})
+        code, msg = error_from_body(body)
+        self.assertEqual(code, "premium_requires_purchase")
+        self.assertIn("paid provider", msg)
+        e = llmf.ProviderError("freeai", "x", msg, status=402, code=code)
+        self.assertEqual((e.retryable, e.scope), (False, "model"))
+        self.assertGreaterEqual(e.cooldown, 3600)
 
 
 class Catalogue(unittest.TestCase):

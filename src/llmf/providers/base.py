@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
@@ -61,6 +62,7 @@ class Options:
     extra: Dict[str, Any] = field(default_factory=dict)
     user_agent: str = _http.DEFAULT_UA
     proxy: Optional[str] = None
+    timeout: Optional[float] = None  # per-request override (e.g. longer for vision)
 
 
 @dataclass
@@ -86,7 +88,8 @@ def error_from_body(body: str) -> Tuple[Optional[str], str]:
     msg = obj.get("message")
     if isinstance(err, dict):
         code = err.get("code") or err.get("type") or code
-        msg = err.get("message") or msg
+        inner = err.get("error")  # free.ai nests the text one level deeper
+        msg = err.get("message") or (inner if isinstance(inner, str) else None) or msg
     elif isinstance(err, str):
         msg = msg or err
     if "daily limit" in str(msg or "").lower():
@@ -130,7 +133,8 @@ class Adapter:
         raise NotImplementedError
 
     def list_models(self, spec: ProviderSpec, timeout: float,
-                    user_agent: str = _http.DEFAULT_UA, proxy: Optional[str] = None) -> List[str]:
+                    user_agent: str = _http.DEFAULT_UA, proxy: Optional[str] = None,
+                    chat_only: bool = True) -> List[str]:
         """Live model ids (best effort). Default: OpenAI-style ``/models``."""
         if not spec.models_path:
             return []
@@ -144,23 +148,70 @@ class Adapter:
                 payload = json.loads(_http.decode_body(resp))
             finally:
                 resp.close()
-        return parse_model_list(payload, spec.free_suffix)
+        return parse_model_list(payload, spec.free_suffix, chat_only)
 
 
-def parse_model_list(payload: Any, free_suffix: str = "") -> List[str]:
+_NON_CHAT_TYPES = {"image", "images", "audio", "video", "embedding", "embeddings", "speech", "tts", "stt",
+                   "transcription", "moderation", "rerank", "reranker", "ocr", "image-generation",
+                   "image_generation", "music", "3d"}
+_NON_CHAT_ID = re.compile(
+    r"(whisper|tts\b|\btts|embed|rerank|diffusion|stable-?diffusion|sdxl|flux|dall-?e|imagen|midjourney|"
+    r"\bocr|ocr\b|voxtral|seedance|kling|sora|veo\b|\bwan\d|moderation|guard|safety|transcrib|speech|"
+    r"text-to-|image-gen|-image\b|/image|music|\bbge-|\be5-)", re.I)
+_CHAT_CATEGORIES = {"chat", "coding", "code", "reasoning", "vision", "text", "llm", "agent"}
+
+
+def is_chat_model(mid: str, item: Any = None) -> bool:
+    """Heuristic: is this live-listed entry a text chat model (not TTS/embedding/guard/image...)?"""
+    if _NON_CHAT_ID.search(mid):
+        return False
+    if isinstance(item, dict):
+        kind = str(item.get("type") or item.get("task") or item.get("category") or "").lower()
+        if kind in _NON_CHAT_TYPES:
+            return False
+        arch = item.get("architecture") if isinstance(item.get("architecture"), dict) else {}
+        outs = item.get("output_modalities") or arch.get("output_modalities")
+        if isinstance(outs, list) and outs and "text" not in [str(o).lower() for o in outs]:
+            return False
+        cats = item.get("categories")
+        if isinstance(cats, list) and cats and not (_CHAT_CATEGORIES & {str(c).lower() for c in cats}):
+            return False
+    return True
+
+
+def _is_free(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return True
+    if item.get("billing_mode", "free") != "free":
+        return False
+    if "self_hosted" in item and item["self_hosted"] is not True:   # free.ai: others are paid
+        return False
+    if item.get("premium") is True or item.get("paid") is True:
+        return False
+    if str(item.get("tier", "")).lower() in ("premium", "paid", "pro"):
+        return False
+    pricing = item.get("pricing")
+    if isinstance(pricing, dict):
+        for k in ("prompt", "completion", "input", "output"):
+            try:
+                if float(pricing.get(k) or 0) > 0:
+                    return False
+            except (TypeError, ValueError):
+                continue
+    return True
+
+
+def parse_model_list(payload: Any, free_suffix: str = "", chat_only: bool = True) -> List[str]:
+    """Ids of the *free* (and by default *chat*) models in a provider's ``/models`` payload."""
     items = payload.get("data", payload.get("models", [])) if isinstance(payload, dict) else payload
     ids: List[str] = []
     for it in items or []:
-        if isinstance(it, str):
-            mid, free = it, True
-        elif isinstance(it, dict):
-            mid = it.get("id") or it.get("name")
-            free = it.get("billing_mode", "free") == "free"
-        else:
-            continue
-        if not mid or not free:
+        mid = it if isinstance(it, str) else (it.get("id") or it.get("name")) if isinstance(it, dict) else None
+        if not mid or not _is_free(it):
             continue
         if free_suffix and not str(mid).endswith(free_suffix):
+            continue
+        if chat_only and not is_chat_model(str(mid), it):
             continue
         ids.append(str(mid))
     return ids

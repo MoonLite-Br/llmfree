@@ -92,7 +92,7 @@ class ChatAIAdapter(OpenAIAdapter):
             raise ProviderError(spec.name, model, "empty answer", status=200, code="empty")
         return Completion(text=text, finish_reason="stop")
 
-    def list_models(self, spec, timeout, user_agent=_http.DEFAULT_UA, proxy=None) -> List[str]:
+    def list_models(self, spec, timeout, user_agent=_http.DEFAULT_UA, proxy=None, chat_only=True) -> List[str]:
         return []  # no public model listing
 
 

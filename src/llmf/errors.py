@@ -40,7 +40,7 @@ class ProviderError(LLMFError):
         self.message = message
         self.status = status
         self.code = code
-        self.retryable, self.scope, self.cooldown = _classify(status, code)
+        self.retryable, self.scope, self.cooldown = _classify(status, code, message)
         super().__init__("%s/%s: %s" % (provider, model, message))
 
 
@@ -56,14 +56,24 @@ class AllProvidersFailed(LLMFError):
 
 _RATE_CODES = {"insufficient_credits", "rate_limit_error", "rate_limited", "rate_limit_exceeded"}
 _TRANSIENT_CODES = {"FREE_MODEL_FAILED"}
+# Free tiers refuse for three different reasons; each needs a different back-off:
+_PAID_HINTS = ("paid model", "use a paid", "requires purchase", "purchased tokens", "upgrade your",
+               "premium model", "payment required")
+_CAPACITY_HINTS = ("resourceexhausted", "resource exhausted", "resource_exhausted", "capacity",
+                   "overloaded", "no available server", "no capacity")
 
 
-def _classify(status: Optional[int], code: Optional[str]):
+def _classify(status: Optional[int], code: Optional[str], message: str = ""):
     """Return ``(retryable, scope, cooldown_seconds)`` for an error."""
-    if code == "daily_limit":  # free daily quota used up: do not bother again for hours
+    text = (message or "").lower()
+    if code == "premium_requires_purchase" or any(h in text for h in _PAID_HINTS):
+        return False, "model", 6 * 3600.0       # this model needs money: forget it for hours
+    if code == "daily_limit":                   # free daily quota used up
         return False, "provider", 6 * 3600.0
+    if any(h in text for h in _CAPACITY_HINTS):
+        return False, "model", 600.0            # that model is full right now; others may be fine
     if status == 429 or (code or "") in _RATE_CODES:
-        return False, "provider", 60.0
+        return False, "provider", 60.0          # plain rate limit: whole endpoint backs off briefly
     if status is None:  # network / timeout / unparsable
         return True, "provider", 20.0
     if status in (408, 425) or status >= 500:

@@ -40,6 +40,26 @@ def decode_body(resp) -> str:
     return data.decode("utf-8", "replace")
 
 
+class _ExplicitProxyHandler(urllib.request.ProxyHandler):
+    """Like ProxyHandler, but an explicit ``proxy=`` is never skipped because of ``no_proxy``."""
+
+    def proxy_open(self, req, proxy, type):  # noqa: A002 - signature fixed by urllib
+        import base64
+        from urllib.parse import unquote
+
+        orig_type = req.type
+        proxy_type, user, password, hostport = urllib.request._parse_proxy(proxy)  # type: ignore[attr-defined]
+        if proxy_type is None:
+            proxy_type = orig_type
+        if user and password:
+            creds = base64.b64encode(("%s:%s" % (unquote(user), unquote(password))).encode()).decode()
+            req.add_header("Proxy-authorization", "Basic " + creds)
+        req.set_proxy(hostport, proxy_type)
+        if orig_type == proxy_type or orig_type == "https":
+            return None
+        return self.parent.open(req, timeout=req.timeout)
+
+
 def build_opener(proxy: Optional[str] = None, *handlers) -> urllib.request.OpenerDirector:
     """Opener honouring an explicit ``proxy`` (http/https/socks*), else the environment's."""
     hs = list(handlers)
@@ -50,7 +70,7 @@ def build_opener(proxy: Optional[str] = None, *handlers) -> urllib.request.Opene
         # ProxyHandler({}) switches off HTTP(S)_PROXY from the environment.
         hs += [urllib.request.ProxyHandler({}), _socks.SocksHTTPHandler(sp), _socks.SocksHTTPSHandler(sp)]
     elif proxy:
-        hs.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
+        hs.append(_ExplicitProxyHandler({"http": proxy, "https": proxy}))
     return urllib.request.build_opener(*hs)
 
 

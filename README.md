@@ -6,42 +6,38 @@
 [![Python versions](https://img.shields.io/pypi/pyversions/llmf.svg)](https://pypi.org/project/llmf/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-**llmf** (*llmfree*) is a stdlib-only Python library and CLI for **public, no-API-key** OpenAI-compatible endpoints. It chooses a live target, falls back on failure, and works on desktop and **Termux**.
+**llmf** (*llmfree*) is a **stdlib-only** Python library and CLI for public, no-API-key OpenAI-compatible endpoints. It picks a live target, falls back on errors, and runs on desktop and **Termux**.
 
 ```python
 import llmf
 
 r = llmf.chat("Explain the CAP theorem in two sentences.")
-print(r)                 # the answer text (Reply is a str subclass)
-print(r.source)          # e.g. "ovh/Meta-Llama-3.3-70B-Instruct"
-print(r.provider, r.model, r.latency, r.usage)
+print(r)              # Reply is a str subclass
+print(r.source)       # "provider/model"
+print(r.provider, r.model, round(r.latency, 3), r.usage)
 ```
 
 ---
 
 ## Package metadata (`pip show llmf`)
 
-After `pip install llmf`, you should see fields like:
-
 ```text
 Name: llmf
-Version: 0.3.0
+Version: 0.4.0
 Summary: llmf (llmfree): free, keyless LLM chat with automatic multi-provider fallback — stdlib only.
 Home-page: https://github.com/MoonLite-Br/llmfree
 Author: Html
 Author-email: moonlite-br@users.noreply.github.com
 License: MIT
-Location: .../site-packages
+Requires-Python: >=3.8
 Requires:
-Required-by:
 ```
 
 | Field | Value |
 |--------|--------|
 | **Name** | `llmf` |
-| **Version** | `0.3.0` |
-| **Requires-Python** | `>=3.8` |
-| **Dependencies** | *none* |
+| **Version** | `0.4.0` |
+| **Dependencies** | none |
 | **License** | MIT |
 | **Repository** | https://github.com/MoonLite-Br/llmfree |
 | **PyPI** | https://pypi.org/project/llmf/ |
@@ -49,7 +45,6 @@ Required-by:
 ```bash
 pip install -U llmf
 pip show llmf
-pip show -f llmf
 ```
 
 ---
@@ -64,73 +59,51 @@ llmf version
 
 ---
 
-## Python API (0.3)
+## Python API
 
-### 1) Short form — `llmf.chat` → `Reply`
+### Short form → `Reply`
 
 ```python
 import llmf
 
 r = llmf.chat("Hello!")
-# r is a str subclass:
 assert isinstance(r, str)
-print(r.text)            # same as str(r)
-print(r.source)          # "provider/model"
-print(r.provider)        # which endpoint answered
-print(r.model)
-print(r.latency)         # seconds
-print(r.usage)           # dict or None (tokens if the upstream sent them)
-print(r.finish_reason)
-print(r.reasoning)       # optional chain-of-thought if present
-print(r.attempts)        # list[Attempt]: provider, model, ok, latency, error
+r.text                 # same as str(r)
+r.source               # "provider/model"
+r.provider, r.model
+r.latency              # seconds
+r.usage                # dict or None
+r.finish_reason
+r.reasoning            # optional
+r.attempts             # list of Attempt(provider, model, ok, latency, error)
 ```
 
-Example session (illustrative):
-
-```text
->>> import llmf
->>> r = llmf.chat("Say hi in one short sentence.")
->>> r
-Hello! How can I help you today?
->>> r.source
-'chatjimmy/...'
->>> r.latency
-0.42
->>> [(a.provider, a.ok, round(a.latency, 2)) for a in r.attempts]
-[('ovh', False, 1.2), ('chatjimmy', True, 0.42)]
-```
-
-**Aliases** for `model=`: `fast` | `best` | `code` | `vision` | `reasoning`  
-Also: fuzzy names (`"llama"`), full ids (`"ovh/Meta-Llama-3.3-70B-Instruct"`), or a list tried in order.
+**`model=` aliases:** `fast` | `best` | `code` | `vision` | `reasoning`  
+Also fuzzy names, full `provider/id`, or a list tried in order.
 
 ```python
-llmf.chat("hi", model="code", max_tokens=256, temperature=0.3, system="Be brief")
+llmf.chat("hi", model="code", max_tokens=256, temperature=0.3)
 llmf.chat("hi", model=["best", "fast"])
-llmf.chat("Describe this", images=["photo.jpg"], model="vision")
-llmf.chat("...", json=True)          # request JSON-style output when supported
+llmf.chat("Describe this", images=["photo.jpg"], model="vision")  # uses vision_timeout (default 90s)
+llmf.chat("...", json=True)
 
 for piece in llmf.stream("Count 1 to 5"):
     print(piece, end="", flush=True)
 ```
 
-### 2) OpenAI-shaped form — `LLMF().chat.completions.create`
+### OpenAI-shaped form
 
 ```python
 from llmf import LLMF
 
 llm = LLMF()
-completion = llm.chat.completions.create(
+c = llm.chat.completions.create(
     model="best",
     messages=[{"role": "user", "content": "Hello"}],
 )
-print(completion.choices[0].message.content)
-print(completion.model)       # provider/model that answered
-print(completion.provider)
-print(completion.usage)       # Usage(prompt_tokens=..., completion_tokens=..., total_tokens=...)
-print(completion.latency)
-print(completion.attempts)
+print(c.choices[0].message.content)
+print(c.model, c.provider, c.usage, c.latency, c.attempts)
 
-# Streaming returns ChatStream / chunks with .choices[].delta.content
 for chunk in llm.chat.completions.create(
     model="fast",
     messages=[{"role": "user", "content": "Count to 3"}],
@@ -141,167 +114,131 @@ for chunk in llm.chat.completions.create(
         print(delta, end="")
 ```
 
-### 3) Catalog & health helpers
+### Catalog, doctor, config
 
 ```python
-llmf.models()                 # callable → list models (same as .list())
-llmf.models.list(live=False)
-llmf.models.resolve("fast")   # expand alias → concrete targets
-llmf.models.check()           # real one-shot call per model; caches ~24h
+llmf.models.list()                          # chat/free catalog by default
+llmf.models.list(live=True)                 # merge live /models (still chat/free by default)
+llmf.models.list(live=True, include_non_chat=True)  # also TTS/embed/image/guard ids
+llmf.models.resolve("fast")
+llmf.models.check()                         # real call per model; ~24h cache
+llmf.models.check(include_live=True, include_non_chat=False)
 
-llmf.providers()              # or .list()
-llmf.health()                 # or .check() — quick ping
+llmf.providers.list()
+llmf.health.check()
 
-llmf.configure(timeout=30, routing="adaptive", race=2, exclude=["blockrun"])
+llmf.configure(timeout=30, vision_timeout=90, routing="adaptive", race=2)
 llmf.register("lab", "http://localhost:11434/v1", ["llama3"], front=True)
-llmf.discover()               # opt-in external keyless catalog
+llmf.discover()
 ```
 
-Env (optional): `LLMF_TIMEOUT`, `LLMF_PROXY`, `LLMF_MODEL`, `LLMF_ROUTING`.
-
-**Proxy:** HTTP(S) or SOCKS (`socks5://`, `socks5h://`, `socks4://`, …) via `proxy=` / `--proxy` / `LLMF_PROXY`.
+Env: `LLMF_TIMEOUT`, `LLMF_PROXY`, `LLMF_MODEL`, `LLMF_ROUTING`.  
+Proxy: `http://`, `https://`, `socks5://`, `socks5h://`, `socks4://` (stdlib).
 
 ---
 
-## CLI — full command reference
+## CLI
 
 ```text
 usage: llmf [options] "question"              ask once (also reads stdin)
        llmf chat                              interactive chat (/reset, /exit)
-       llmf models [list|check|resolve NAME]  catalog / live probe / expand alias
-       llmf doctor [--all]                    alias of `models check`
-       llmf providers | health                endpoints / quick ping
-       llmf serve [--port N]                  local OpenAI-compatible server
+       llmf models [list|check|resolve NAME]
+       llmf doctor [--all] [--include-non-chat] [--include-limited]
+       llmf providers | health
+       llmf serve [--port N]
        llmf version
 ```
 
 ### Commands
 
-| Command | What it does |
-|---------|----------------|
-| `llmf "…"` / `llmf ask "…"` | One-shot question |
-| `llmf chat` | Interactive REPL (`/reset`, `/exit`) |
-| `llmf models` / `llmf models list` | Table of known models |
-| `llmf models list --live` | Also query providers’ `/models` |
-| `llmf models resolve fast` | Print what an alias expands to |
-| `llmf models check` | Call every model once (health cache) |
-| `llmf doctor` | Same as `models check` |
-| `llmf doctor --all` | Include models discovered live |
-| `llmf doctor --include-limited` | Also hit strict daily-quota providers |
-| `llmf doctor --no-save` | Do not write the health cache |
+| Command | Description |
+|---------|-------------|
+| `llmf "…"` / `llmf ask "…"` | One-shot ask |
+| `llmf chat` | Interactive REPL |
+| `llmf models` / `models list` | Catalog table |
+| `llmf models list --live` | + live `/models` (chat/free only by default) |
+| `llmf models list --live --include-non-chat` | Include non-chat ids |
+| `llmf models resolve fast` | Expand alias |
+| `llmf models check` / `llmf doctor` | Probe every chat model once |
+| `llmf doctor --all` | Also test live-discovered model ids |
+| `llmf doctor --include-limited` | Include strict daily-quota providers |
+| `llmf doctor --include-non-chat` | Include non-chat model ids |
+| `llmf doctor --no-save` | Do not write health cache |
 | `llmf providers` | Provider table |
-| `llmf health` | Quick OK/FAIL ping per default target |
-| `llmf serve` | Local OpenAI-compatible HTTP server |
+| `llmf health` | Quick OK/FAIL ping |
+| `llmf serve` | Local OpenAI-compatible server |
 | `llmf version` | Print version |
 
-### Global flags
+### Flags
 
 | Flag | Meaning |
 |------|---------|
 | `-m` / `--model` | Alias, fuzzy name, or `provider/model` |
-| `-p` / `--provider` | Force provider (see `llmf providers`) |
+| `-p` / `--provider` | Force provider |
 | `-s` / `--system` | System prompt |
 | `-i` / `--interactive` | REPL |
 | `--image PATH` | Image path/URL (repeatable) |
-| `--max-tokens N` | Max new tokens |
-| `-t` / `--temperature` | Sampling temperature |
-| `--stream` | Stream tokens to stdout |
-| `--json` | Machine-readable result |
+| `--max-tokens` `-t` / `--temperature` | Sampling |
+| `--stream` `--json` `-v` | Stream / JSON / show source |
 | `--routing ranked\|adaptive` | Fallback strategy |
-| `--race N` | Hedge: try N providers in parallel |
-| `--timeout SEC` | Per-request timeout |
-| `--proxy URL` | `http://` / `https://` / `socks5://` / `socks5h://` / `socks4://` |
-| `-v` / `--verbose` | Show which provider/model answered |
-| `-V` / `--version` | Version (argparse) |
-| `--live` | For `models list`: live catalog |
-| `--all` | For `doctor`: include live model ids |
-| `--include-limited` | For `doctor`: quota-limited providers |
-| `--no-save` | For `doctor`: skip cache write |
-| `--host` `--port` | For `serve` (default `127.0.0.1:8000`) |
-| `--api-key` | For `serve`: require Bearer token |
-| `--cors` | For `serve`: allow browser CORS |
-| `--strict-models` | For `serve`: 404 unknown model names |
-| `--no-fallback` | For `serve`: do not switch model on failure |
+| `--race N` | Parallel hedged requests |
+| `--timeout` `--proxy URL` | Timeout / HTTP(S)/SOCKS proxy |
+| `--live` | Live model list |
+| `--all` | Doctor: include live ids |
+| `--include-limited` | Doctor: quota-limited providers |
+| `--include-non-chat` | List/doctor: non-chat models |
+| `--no-save` | Doctor: skip cache write |
+| `--host` `--port` `--api-key` `--cors` | `serve` bind / auth / CORS |
+| `--strict-models` `--no-fallback` | `serve` strictness |
 
-### Terminal examples
-
-**One-shot ask**
+### Examples
 
 ```text
 $ llmf "Say hi in one short sentence."
 Hello! How can I help you today?
 
 $ llmf -v "2+2=?"
-ovh/Meta-Llama-3.3-70B-Instruct
+ovh/…
 4
-```
 
-**JSON output**
-
-```text
 $ llmf --json "Say hi in one short sentence."
-{"text": "Hello! How can I help you today?", "provider": "…", "model": "…", "reasoning": null, "usage": {…}, "latency": 0.41}
-```
+{"text": "…", "provider": "…", "model": "…", "latency": 0.4, ...}
 
-**Models / providers / health**
-
-```text
 $ llmf models
-MODEL                                          TAGS              STATUS
-ovh/Meta-Llama-3.3-70B-Instruct                best,code
-chatjimmy/…                                    fast
+MODEL                                   TAGS         STATUS
 …
 
 $ llmf models resolve fast
-chatjimmy/…
-
-$ llmf providers
-PROVIDER         DEFAULT MODEL              MIN GAP  NOTE
-ovh              Meta-Llama-3.3-70B-Instruct
 …
 
-$ llmf health
-OK    ovh              Meta-Llama-3.3-70B-Instruct   0.85s
-FAIL  blockrun         …                            12.01s  timeout
-```
-
-**Doctor**
-
-```text
 $ llmf doctor
 Testing every model once (providers in parallel)...
-OK    ovh/Meta-Llama-3.3-70B-Instruct                 0.90s  Hello…
-FAIL  some-provider/some-model                        5.00s  HTTP 429
-…
-```
+OK    …/…   0.90s  Hello…
+FAIL  …/…   5.00s  HTTP 429
 
-**Local server**
-
-```text
 $ llmf serve --port 8000
-# listens on http://127.0.0.1:8000  (OpenAI-compatible /v1/chat/completions, /v1/models, …)
+# http://127.0.0.1:8000  — /v1/chat/completions, /v1/models, …
 ```
 
 ---
 
-## Behaviour notes
+## Behaviour (0.4)
 
-- Fallback order prefers faster/cleaner targets; failures get a **cooldown** (longer on HTTP 429).
-- `routing="adaptive"` uses latency EWMA; `race=N` sends parallel hedged requests.
-- `doctor` / `models.check()` results are **cached ~24 hours** to demote dead models.
-- Empty “HTTP 200” bodies and pure-reasoning empty content are treated as failures.
-- If every target fails → `llmf.AllProvidersFailed` with `.errors`.
-
-Public free endpoints change often — re-check with `llmf health` and `llmf doctor`.
+- **429 handling:** plain rate-limit → provider cooldown ~60s; capacity / `ResourceExhausted` → that **model** sleeps ~10 min; “use a paid model” → model sleeps hours.
+- **`models.list(live=…)` / `doctor --all`:** default **chat + free only** (skip whisper/tts/embedding/image/video/OCR/guard and priced ids). Override with `include_non_chat=True` / `--include-non-chat`.
+- **`fast` tag:** dynamic from measured latency (≤1s joins; failures sink).
+- **`vision_timeout`:** default 90s for image requests and vision checks in doctor.
+- Fallback + optional `routing="adaptive"` and `race=N`; doctor results cached ~24h.
+- Total failure → `llmf.AllProvidersFailed` with `.errors`.
 
 ---
 
 ## Safety
 
-- Endpoints are **unofficial and free**. They may rate-limit, change, or disappear.
-- **Do not send secrets**, passwords, or personal data.
-- `discover()` contacts external catalogs (opt-in).
-- Default `llmf serve` binds **localhost** and disables CORS unless you pass `--cors` / `--api-key`.
+- Endpoints are unofficial and free; they may change or vanish.
+- Do not send secrets or personal data.
+- `discover()` is opt-in external catalog access.
+- `llmf serve` defaults to **localhost**, no CORS, unless you enable `--cors` / `--api-key`.
 
 ---
 
@@ -311,10 +248,11 @@ Public free endpoints change often — re-check with `llmf health` and `llmf doc
 git clone https://github.com/MoonLite-Br/llmfree.git
 cd llmfree
 python -m unittest discover -s tests -v
+python live_test.py          # optional live internet report (JSON)
 python -m build && twine check dist/*
 ```
 
-See [CHANGELOG.md](CHANGELOG.md) for 0.1 → 0.3 history.
+History: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

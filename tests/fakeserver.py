@@ -37,7 +37,9 @@ class Handler(BaseHTTPRequestHandler):
             self.wfile.write(data)
         elif self.path.endswith("/models"):
             self._send(200, json.dumps({"data": [
-                {"id": "a:free"}, {"id": "b"}, {"id": "paid", "billing_mode": "paid"}]}))
+                {"id": "a:free"}, {"id": "b"}, {"id": "paid", "billing_mode": "paid"},
+                {"id": "whisper-large-v3"}, {"id": "Qwen3Guard-8B"}, {"id": "emb", "type": "embedding"},
+                {"id": "priced", "pricing": {"prompt": "0.001", "completion": "0.002"}}]}))
         else:
             self._send(404, "{}")
 
@@ -114,6 +116,13 @@ class Handler(BaseHTTPRequestHandler):
 
     def _openai(self, body):
         model = body["model"]
+        if model == "slow":
+            import time as _t
+            _t.sleep(1.2)
+        if model == "err429cap":
+            return self._send(429, '{"error":{"message":"ResourceExhausted: no capacity for this model"}}')
+        if model == "err429paid":
+            return self._send(429, '{"error":{"message":"Free quota exhausted, please use a paid model"}}')
         if model == "err500":
             return self._send(500, '{"error":"boom"}')
         if model == "err429":

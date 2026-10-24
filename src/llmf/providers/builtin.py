@@ -58,6 +58,21 @@ BUILTIN: List[ProviderSpec] = [
         note="Strongest free model. ~200 requests/hour/IP.",
     ),
     ProviderSpec(
+        name="freeai",
+        base_url="https://api.free.ai",
+        chat_path="/v1/chat/completions",
+        models_path="/v1/models",
+        aliases=("free.ai",),
+        default_model="qwen7b",
+        models=[
+            M("qwen7b", vision=True, aliases=("qwen3.6", "qwen3.6-35b"),
+              note="actually Qwen 3.6 35B; handles vision (image input not yet verified)"),
+            M("qwen-coder", note="same base as qwen7b, code tuned (chat not yet verified)"),
+            M("deepseek-r1", aliases=("r1",), note="reasoning; needs max_tokens >= 200"),
+        ],
+        note="Self-hosted free models (vLLM). The 500+ OpenRouter models on this site are paid.",
+    ),
+    ProviderSpec(
         name="chatjimmy",
         base_url="https://chatjimmy.ai",
         chat_path="/api/chat",
@@ -102,8 +117,12 @@ BUILTIN: List[ProviderSpec] = [
         models_path="/v1/models",
         aliases=("llm7.io",),
         default_model="gpt-oss:20b",
-        models=[M("gpt-oss:20b", aliases=("gpt-oss",))],
-        note="Stable, small model.",
+        models=[
+            M("gpt-oss:20b", aliases=("gpt-oss",)),
+            M("minimax-m2.7", note="~0.2 s measured"),
+            M("codestral-latest", note="code model, fast"),
+        ],
+        note="Stable and quick. Some larger/other models answer 429 (capacity).",
     ),
     ProviderSpec(
         name="blockrun",
@@ -116,22 +135,10 @@ BUILTIN: List[ProviderSpec] = [
             M("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"),
             M("nvidia/llama-3.2-11b-vision", vision=True),
             M("nvidia/nemotron-3.5-lightning"),
-            M("cohere/north-mini-code"),
+            M("cohere/north-mini-code", verified=False, broken=True,
+              note="429 \"use a paid model\" (user test 2026-10-24)"),
         ],
         note="Upstream times out after ~12 s, so it can be flaky.",
-    ),
-    ProviderSpec(
-        name="freeai",
-        base_url="https://api.free.ai",
-        chat_path="/v1/chat/completions",
-        models_path="/v1/models",
-        aliases=("free.ai",),
-        default_model="deepseek-r1-7b",
-        models=[
-            M("deepseek-r1-7b", aliases=("deepseek-r1", "r1")),
-            M("qwen-vl", vision=True),
-        ],
-        note="Only verified indirectly (via stillworks).",
     ),
     ProviderSpec(
         name="chatai",
@@ -154,35 +161,40 @@ BUILTIN: List[ProviderSpec] = [
 
 # Intent aliases -> ordered (provider, model) targets.
 TAGS: Dict[str, List[Tuple[str, str]]] = {
+    # ordered by latencies measured on real networks (2026-10-24); "fast" is re-sorted live by llmf
     "fast": [
+        ("llm7", "minimax-m2.7"),
+        ("llm7", "codestral-latest"),
         ("chatjimmy", "llama3.1-8B"),
-        ("ovh", "Meta-Llama-3_3-70B-Instruct"),
         ("llm7", "gpt-oss:20b"),
+        ("pollinations", "openai"),
+        ("ovh", "Mistral-Nemo-Instruct-2407"),
         ("kilo-gateway", "kilo-auto/small"),
     ],
     "best": [
         ("kilo-openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"),
-        ("ovh", "Qwen3.5-397B-A17B"),
         ("blockrun", "nvidia/nemotron-3-ultra-550b"),
         ("ovh", "gpt-oss-120b"),
+        ("ovh", "Qwen3.5-397B-A17B"),
         ("ovh", "Meta-Llama-3_3-70B-Instruct"),
     ],
     "code": [
         ("kilo-openrouter", "cohere/north-mini-code:free"),
-        ("blockrun", "cohere/north-mini-code"),
+        ("llm7", "codestral-latest"),
+        ("freeai", "qwen-coder"),
         ("ovh", "Qwen3.5-397B-A17B"),
         ("kilo-openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"),
     ],
     "vision": [
         ("ovh", "Qwen2.5-VL-72B-Instruct"),
-        ("freeai", "qwen-vl"),
-        ("blockrun", "nvidia/llama-3.2-11b-vision"),
+        ("freeai", "qwen7b"),
         ("kilo-openrouter", "nvidia/nemotron-3.5-super-vl:free"),
+        ("blockrun", "nvidia/llama-3.2-11b-vision"),
     ],
     "reasoning": [
         ("ovh", "gpt-oss-120b"),
         ("kilo-openrouter", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"),
-        ("freeai", "deepseek-r1-7b"),
+        ("freeai", "deepseek-r1"),
         ("llm7", "gpt-oss:20b"),
     ],
 }

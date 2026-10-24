@@ -41,6 +41,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--all", action="store_true", help="doctor: also test models found live (/models)")
     p.add_argument("--include-limited", action="store_true",
                    help="doctor: also test strictly quota-limited providers (e.g. chatai)")
+    p.add_argument("--include-non-chat", action="store_true",
+                   help="models/doctor --live/--all: keep TTS, embedding, guard, image... ids too")
     p.add_argument("--no-save", action="store_true", help="doctor: do not write the health cache")
     p.add_argument("--routing", choices=("ranked", "adaptive"), help="fallback order strategy")
     p.add_argument("--race", type=int, help="send each request to N providers at once")
@@ -126,7 +128,7 @@ def _table(rows: List[List[str]], header: List[str]) -> None:
 def _cmd_models(a, c, args: List[str]) -> int:
     sub = args[0] if args else "list"
     if sub == "list":
-        rows = c.models.list(live=a.live)
+        rows = c.models.list(live=a.live, include_non_chat=a.include_non_chat)
         if a.json:
             print(json.dumps([{"name": m.name, "tags": list(m.tags), "vision": m.vision,
                                "verified": m.verified} for m in rows], indent=2))
@@ -164,7 +166,8 @@ def _cmd_doctor(a, c) -> int:
     if not a.json:
         print("Testing every model once (providers in parallel)...", file=sys.stderr)
     results = c.models.check(providers=[a.provider] if a.provider else None, include_live=a.all,
-                             include_limited=a.include_limited, save=not a.no_save, on_result=show)
+                             include_limited=a.include_limited, include_non_chat=a.include_non_chat,
+                             timeout=a.timeout or 30.0, save=not a.no_save, on_result=show)
     if a.json:
         print(json.dumps([{"name": r.name, "ok": r.ok, "latency": round(r.latency, 3),
                            "answer": r.answer, "error": r.error} for r in results],

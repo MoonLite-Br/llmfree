@@ -77,6 +77,12 @@ class _State:
                 except (KeyError, TypeError, ValueError):
                     continue
 
+    def measured(self, max_latency: float) -> List[Target]:
+        """Targets whose observed latency is <= ``max_latency`` (not demoted), fastest first."""
+        with self._lock:
+            rows = [(v, t) for t, v in self._ewma.items() if v <= max_latency and t not in self._demoted]
+        return [t for _, t in sorted(rows)]
+
     def latency(self, target: Target) -> Optional[float]:
         with self._lock:
             return self._ewma.get(target)
@@ -140,6 +146,7 @@ def _join(provider: Optional[str], model: ModelArg) -> ModelArg:
     return "%s/%s" % (provider, model or "")
 
 
+FAST_SECONDS = 1.0  # a measured model at or under this latency may join the dynamic "fast" tag
 CHECK_PROMPT = "What is the capital of Vietnam? Answer in one short sentence."
 
 
@@ -238,9 +245,10 @@ class _Models:
     def __call__(self, live: bool = False) -> List[ModelInfo]:
         return self.list(live=live)
 
-    def list(self, live: bool = False) -> List[ModelInfo]:
-        """The model catalogue. ``live=True`` also asks each provider for ids it serves now."""
-        return self._c._models_impl(live)
+    def list(self, live: bool = False, include_non_chat: bool = False) -> List[ModelInfo]:
+        """The model catalogue. ``live=True`` also asks each provider for the free *chat* ids it
+        serves now (``include_non_chat=True`` keeps TTS / embedding / guard / image ids too)."""
+        return self._c._models_impl(live, include_non_chat)
 
     def check(self, **kw: Any) -> List[HealthResult]:
         """Really call every model once and report which ones work (see ``llmf doctor``)."""
@@ -291,6 +299,7 @@ class Client:
         builtin: load the built-in provider catalogue.
         proxy: optional ``http://``, ``https://`` or ``socks4/4a/5/5h://`` proxy URL (your own).
         use_cache: read/write the ``llmf doctor`` health cache (``LLMF_NO_CACHE=1`` disables).
+        vision_timeout: seconds per request when images are attached (image models are slow).
     """
 
     def __init__(self, *, model: ModelArg = None, timeout: float = 60.0, deadline: float = 180.0,
@@ -299,7 +308,7 @@ class Client:
                  exclude: Sequence[str] = (), builtin: bool = True,
                  user_agent: str = _http.DEFAULT_UA, proxy: Optional[str] = None,
                  routing: str = "ranked", race: int = 1, use_cache: bool = True,
-                 cache_dir: Optional[str] = None) -> None:
+                 cache_dir: Optional[str] = None, vision_timeout: float = 90.0) -> None:
         self.model = model
         self.proxy = _http.check_proxy(proxy)
         self.timeout = timeout
@@ -315,6 +324,7 @@ class Client:
         self.race = race
         self.use_cache = use_cache
         self.cache_dir = cache_dir
+        self.vision_timeout = vision_timeout
         self._reg = Registry(builtin=builtin)
         self._state = _State()
         if use_cache:
@@ -383,7 +393,7 @@ class Client:
         return [ProviderInfo(s.name, s.chat_url, s.kind, s.default, [m.id for m in s.models],
                              s.min_interval, s.note) for s in self._reg.providers.values()]
 
-    def _models_impl(self, live: bool = False) -> List[ModelInfo]:
+    def _models_impl(self, live: bool = False, include_non_chat: bool = False) -> List[ModelInfo]:
         out = []
         for t in self._reg.catalog():
             m = self._reg.model_spec(*t)
@@ -391,20 +401,21 @@ class Client:
                                  bool(m and m.vision), bool(m and m.verified and not m.broken)))
         if live:
             known = {(i.provider, i.id) for i in out}
-            for name, ids in self._live_ids().items():
+            for name, ids in self._live_ids(not include_non_chat).items():
                 for mid in ids:
                     if (name, mid) not in known:
                         out.append(ModelInfo(name, mid, (), False, False))
         return out
 
-    def _live_ids(self) -> Dict[str, List[str]]:
+    def _live_ids(self, chat_only: bool = True) -> Dict[str, List[str]]:
         from concurrent.futures import ThreadPoolExecutor
 
         specs = [s for s in self._reg.providers.values() if s.models_path]
 
         def one(s: ProviderSpec) -> List[str]:
             try:
-                return ADAPTERS[s.kind].list_models(s, min(self.timeout, 20.0), self.user_agent, self.proxy)
+                return ADAPTERS[s.kind].list_models(s, min(self.timeout, 20.0), self.user_agent, self.proxy,
+                                                    chat_only)
             except LLMFError as e:
                 log.debug("live models failed for %s: %s", s.name, e)
                 return []
@@ -432,7 +443,8 @@ class Client:
             return list(ex.map(one, specs))
 
     def _check_impl(self, *, providers: Optional[Sequence[str]] = None, include_live: bool = False,
-                    include_limited: bool = False, timeout: float = 30.0, prompt: str = CHECK_PROMPT,
+                    include_limited: bool = False, include_non_chat: bool = False, timeout: float = 30.0,
+                    vision_timeout: Optional[float] = None, prompt: str = CHECK_PROMPT,
                     on_result: Optional[Callable[[HealthResult], None]] = None,
                     save: bool = True) -> List[HealthResult]:
         """Call every catalogued model once (providers in parallel, models in sequence)."""
@@ -447,7 +459,7 @@ class Client:
         targets = list(reg.catalog())
         if include_live:
             known = set(targets)
-            for name, ids in self._live_ids().items():
+            for name, ids in self._live_ids(not include_non_chat).items():
                 targets += [Target(name, i) for i in ids if Target(name, i) not in known]
         groups: Dict[str, List[Target]] = {}
         for t in targets:
@@ -459,6 +471,7 @@ class Client:
         msgs = build_messages(prompt)
         opts = self._options(300, None, None, False, None, {})
         results: Dict[Target, HealthResult] = {}
+        vtimeout = vision_timeout if vision_timeout is not None else max(timeout, 60.0)
 
         def work(name: str) -> None:
             spec = reg.providers[name]
@@ -468,7 +481,8 @@ class Client:
                 m = reg.model_spec(*t)
                 t0 = time.monotonic()
                 try:
-                    comp = ADAPTERS[spec.kind].complete(spec, t.model, msgs, opts, timeout)
+                    comp = ADAPTERS[spec.kind].complete(spec, t.model, msgs, opts,
+                                                        vtimeout if (m and m.vision) else timeout)
                     r = HealthResult(name, t.model, True, time.monotonic() - t0,
                                      answer=" ".join(comp.text.split())[:80], verified=bool(m and m.verified))
                 except LLMFError as e:
@@ -504,6 +518,10 @@ class Client:
             model = self.model
         base = reg.tag("vision") if vision else reg.chain()
         targets = reg.resolve(model) if model is not None else list(base)
+        is_fast = isinstance(model, str) and model.strip().lower() == "fast"
+        if is_fast:  # "fast" follows measurements: add anything measured quick, sort by latency
+            catalog = {t for t in reg.catalog() if not (reg.model_spec(*t) and reg.model_spec(*t).broken)}
+            targets += [t for t in self._state.measured(FAST_SECONDS) if t in catalog and t not in targets]
         if fallback is None:
             fallback = model is None
         if fallback:
@@ -517,7 +535,7 @@ class Client:
         if not plan:
             raise ModelNotFound("no usable provider after only=/exclude= filtering")
         intervals = {n: s.min_interval for n, s in reg.providers.items()}
-        return self._state.order(plan, intervals, self.routing == "adaptive")
+        return self._state.order(plan, intervals, self.routing == "adaptive" or is_fast)
 
     def _sequence(self, plan: List[Target]) -> List[Target]:
         seq: List[Target] = []
@@ -538,7 +556,7 @@ class Client:
         t0 = time.monotonic()
         try:
             comp = ADAPTERS[spec.kind].complete(spec, t.model, messages, opts,
-                                                max(1.0, min(self.timeout, end - time.monotonic())))
+                                                max(1.0, min(opts.timeout or self.timeout, end - time.monotonic())))
         except ProviderError as e:
             log.debug("failed: %s", e)
             self._state.fail(e)
@@ -586,11 +604,13 @@ class Client:
         opts = self._options(max_tokens, temperature, top_p, json, tools, extra, stop)
         if proxy:
             opts.proxy = _http.check_proxy(proxy)
+        if images:
+            opts.timeout = max(self.timeout, self.vision_timeout)
         width = max(1, int(race if race is not None else self.race))
         errors: List[ProviderError] = []
         attempts: List[Attempt] = []
         dead = set()
-        end = time.monotonic() + self.deadline
+        end = time.monotonic() + max(self.deadline, (opts.timeout or 0) * 1.5)
         seq = self._sequence(plan)
         pos, last_pass = 0, 0
         while pos < len(seq):
@@ -645,6 +665,8 @@ class Client:
         opts = self._options(max_tokens, temperature, top_p, json, tools, extra, stop)
         if proxy:
             opts.proxy = _http.check_proxy(proxy)
+        if images:
+            opts.timeout = max(self.timeout, self.vision_timeout)
 
         def gen(st: Stream) -> Iterator[str]:
             errors: List[ProviderError] = []
@@ -664,7 +686,7 @@ class Client:
                 self._throttle(spec, left)
                 t0 = time.monotonic()
                 it = ADAPTERS[spec.kind].stream(spec, t.model, messages, opts,
-                                                min(self.timeout, end - time.monotonic()))
+                                                min(opts.timeout or self.timeout, end - time.monotonic()))
                 try:
                     first = next(it)
                 except StopIteration:

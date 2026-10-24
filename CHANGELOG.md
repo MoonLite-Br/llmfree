@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.4.1
+- Fix: "capacity exhausted ... or use a paid model" (BlockRun) was read as *paid* and put the model to sleep for
+  hours; capacity now wins (10 min). `cohere/north-mini-code` on BlockRun is no longer marked broken.
+- 429 with "Retry after N seconds" now cools down ~3xN seconds instead of a flat 60 s; llm7 gets `min_interval=1.1`.
+- ovh default model is now `gpt-oss-120b` (~2 s) instead of Llama-3.3-70B (7-30 s / 429 on anonymous tier).
+- Live-id filter also drops freeai utility models (madlad, realesrgan, rmbg, demucs, deoldify, step1x-edit, sam).
+
 ## 0.4.0
 - Errors: 429 is now split into plain rate-limit (provider sleeps 60 s), capacity / `ResourceExhausted`
   (only that model sleeps 10 min) and "use a paid model" (model sleeps hours).

@@ -157,7 +157,8 @@ _NON_CHAT_TYPES = {"image", "images", "audio", "video", "embedding", "embeddings
 _NON_CHAT_ID = re.compile(
     r"(whisper|tts\b|\btts|embed|rerank|diffusion|stable-?diffusion|sdxl|flux|dall-?e|imagen|midjourney|"
     r"\bocr|ocr\b|voxtral|seedance|kling|sora|veo\b|\bwan\d|moderation|guard|safety|transcrib|speech|"
-    r"text-to-|image-gen|-image\b|/image|music|\bbge-|\be5-)", re.I)
+    r"text-to-|image-gen|-image\b|/image|music|\bbge-|\be5-|"
+    r"realesrgan|\brmbg|demucs|deoldify|step1x|^sam$|madlad|upscal|inpaint|lance-)", re.I)
 _CHAT_CATEGORIES = {"chat", "coding", "code", "reasoning", "vision", "text", "llm", "agent"}
 
 

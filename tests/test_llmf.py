@@ -159,7 +159,7 @@ class Resolve(unittest.TestCase):
         self.assertEqual(r("fast")[0].provider, "llm7")
         self.assertEqual(r("Llama")[0].model, "Meta-Llama-3_3-70B-Instruct")
         self.assertEqual([t.provider for t in r("gpt-oss")], ["pollinations", "llm7", "ovh"])
-        self.assertEqual(r("ovh")[0].model, "Meta-Llama-3_3-70B-Instruct")
+        self.assertEqual(r("ovh")[0].model, "gpt-oss-120b")
         self.assertEqual(r("ovh/qwen3.5-9b")[0].model, "Qwen3.5-9B")
         self.assertEqual(r("ovh/brand-new")[0].model, "brand-new")  # pass-through
         self.assertEqual(len(r("kilo")), 2)

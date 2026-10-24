@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import List, Optional
 
 
@@ -63,18 +64,28 @@ _CAPACITY_HINTS = ("resourceexhausted", "resource exhausted", "resource_exhauste
                    "overloaded", "no available server", "no capacity")
 
 
-def _classify(status: Optional[int], code: Optional[str], message: str = ""):
-    """Return ``(retryable, scope, cooldown_seconds)`` for an error."""
+def _retry_after(text):
+    m = re.search(r"retry (?:after|in)\s+(\d+(?:\.\d+)?)\s*(?:second|sec|s\b)", text)
+    return float(m.group(1)) if m else None
+
+
+def _classify(status, code, message=""):
     text = (message or "").lower()
-    if code == "premium_requires_purchase" or any(h in text for h in _PAID_HINTS):
-        return False, "model", 6 * 3600.0       # this model needs money: forget it for hours
-    if code == "daily_limit":                   # free daily quota used up
+    if code == "premium_requires_purchase":
+        return False, "model", 6 * 3600.0
+    if code == "daily_limit":
         return False, "provider", 6 * 3600.0
+    # Capacity wins over "or use a paid model": that phrase is only an upsell on a busy free pool.
     if any(h in text for h in _CAPACITY_HINTS):
-        return False, "model", 600.0            # that model is full right now; others may be fine
+        return False, "model", 600.0
+    if any(h in text for h in _PAID_HINTS):
+        return False, "model", 6 * 3600.0
+    wait = _retry_after(text)
+    if wait is not None and (status == 429 or (code or "") in _RATE_CODES):
+        return False, "provider", max(5.0, min(wait * 3 + 2, 120.0))
     if status == 429 or (code or "") in _RATE_CODES:
-        return False, "provider", 60.0          # plain rate limit: whole endpoint backs off briefly
-    if status is None:  # network / timeout / unparsable
+        return False, "provider", 60.0
+    if status is None:
         return True, "provider", 20.0
     if status in (408, 425) or status >= 500:
         return True, "provider", 20.0

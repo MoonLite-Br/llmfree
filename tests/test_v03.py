@@ -212,6 +212,17 @@ class ErrorKinds(unittest.TestCase):
         self.assertGreaterEqual(cd, 3600)
         self.assertEqual(self.kind(500, "boom")[:2], (True, "provider"))
 
+    def test_blockrun_capacity_message_is_not_treated_as_paid(self):
+        msg = ("Free model capacity exhausted \u2014 retry shortly, or use a paid model (from $0.002/request). "
+               "(NVIDIA API error: 503 ResourceExhausted)")
+        self.assertEqual(self.kind(429, msg), (False, "model", 600.0))
+
+    def test_retry_after_is_honoured(self):
+        r, scope, cd = self.kind(429, "Rate limit exceeded. Retry after 1 seconds.")
+        self.assertEqual(scope, "provider")
+        self.assertLess(cd, 15)
+        self.assertGreaterEqual(cd, 5)
+
     def test_capacity_on_one_model_does_not_sideline_the_provider(self):
         c = LLMF(builtin=False, retries=0, use_cache=False)
         c.register("p", BASE + "/v1", ["err429cap", "ok"])
@@ -253,7 +264,9 @@ class ChatOnlyAndFree(unittest.TestCase):
         for bad in ("whisper-large-v3", "Qwen3Guard-8B", "nvidia/nemotron-3.5-content-safety:free", "kokoro-tts",
                     "text-embedding-3-small", "flux-dev", "voxtral-mini", "kling-v2", "seedance-1"):
             self.assertFalse(is_chat_model(bad), bad)
-        for good in ("gpt-oss:20b", "Qwen3.5-397B-A17B", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
+        for bad in ("madlad", "realesrgan", "rmbg", "demucs", "deoldify", "step1x-edit", "sam"):
+            self.assertFalse(is_chat_model(bad), bad)
+        for good in ("moondream2", "qwen25-vl", "qwen3-coder", "gpt-oss:20b", "Qwen3.5-397B-A17B", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning",
                      "deepseek-r1", "qwen-vl"):
             self.assertTrue(is_chat_model(good), good)
         self.assertFalse(is_chat_model("x", {"architecture": {"output_modalities": ["image"]}}))

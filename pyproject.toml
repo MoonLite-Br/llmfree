@@ -9,16 +9,8 @@ description = "llmf (llmfree): free, keyless LLM chat with automatic multi-provi
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
-authors = [
-    { name = "Html", email = "moonlite-br@users.noreply.github.com" },
-]
-maintainers = [
-    { name = "MoonLite-Br", email = "moonlite-br@users.noreply.github.com" },
-]
-keywords = [
-    "llm", "ai", "chat", "free", "keyless", "openai-compatible",
-    "fallback", "termux", "streaming", "socks", "proxy",
-]
+authors = [{ name = "Html", email = "moonlite-br@users.noreply.github.com" }]
+keywords = ["llm", "ai", "chat", "free", "keyless", "openai-compatible", "fallback", "termux"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -44,7 +36,6 @@ Documentation = "https://github.com/MoonLite-Br/llmfree#readme"
 Repository = "https://github.com/MoonLite-Br/llmfree"
 Issues = "https://github.com/MoonLite-Br/llmfree/issues"
 Changelog = "https://github.com/MoonLite-Br/llmfree/blob/main/CHANGELOG.md"
-"Bug Tracker" = "https://github.com/MoonLite-Br/llmfree/issues"
 PyPI = "https://pypi.org/project/llmf/"
 
 [project.scripts]
@@ -58,6 +49,3 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 llmf = ["py.typed"]
-
-[tool.pytest.ini_options]
-testpaths = ["tests"]

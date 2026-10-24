@@ -1,20 +1,42 @@
 # llmf
 
-**Free, keyless LLM chat in one call.**
+**Free, keyless LLM access in one call — with automatic fallback.**
 
-[![PyPI](https://img.shields.io/pypi/v/llmf.svg)](https://pypi.org/project/llmf/)
-[![Python](https://img.shields.io/pypi/pyversions/llmf.svg)](https://pypi.org/project/llmf/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![PyPI version](https://img.shields.io/pypi/v/llmf.svg)](https://pypi.org/project/llmf/)
+[![Python versions](https://img.shields.io/pypi/pyversions/llmf.svg)](https://pypi.org/project/llmf/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![PyPI downloads](https://img.shields.io/pypi/dm/llmf.svg)](https://pypi.org/project/llmf/)
 
-`llmf` (llmfree) talks to public, no-key OpenAI-compatible endpoints, picks a live one, and **falls back automatically** when something fails. Zero third-party dependencies — stdlib only. Works on desktop, server, and **Termux**.
+**llmf** (*llmfree*) is a tiny Python library and CLI that talks to **public, no-API-key** OpenAI-compatible endpoints. It picks a working provider, falls back when one fails, and needs **zero third-party dependencies** (stdlib only). Runs on Linux, macOS, Windows, and **Termux**.
 
 ```python
 import llmf
 
-print(llmf.chat("Hello — who are you?"))
+print(llmf.chat("Explain the CAP theorem in two sentences."))
 ```
 
-No API keys. No provider setup. Same return type every time.
+No signup. No keys. Same `Reply` / OpenAI-shaped objects every time.
+
+---
+
+## Package info (`pip show llmf`)
+
+| Field | Value |
+|--------|--------|
+| **Name** | `llmf` |
+| **Version** | `0.3.0` |
+| **Summary** | Free, keyless LLM chat with automatic multi-provider fallback — stdlib only |
+| **Author** | Html |
+| **License** | MIT |
+| **Requires-Python** | `>=3.8` |
+| **Dependencies** | *none* |
+| **Home-page** | https://github.com/MoonLite-Br/llmfree |
+| **PyPI** | https://pypi.org/project/llmf/ |
+
+```bash
+pip show llmf
+pip show -f llmf    # list installed files
+```
 
 ---
 
@@ -24,7 +46,7 @@ No API keys. No provider setup. Same return type every time.
 pip install -U llmf
 ```
 
-Requires **Python ≥ 3.8**.
+Verify:
 
 ```bash
 python -c "import llmf; print(llmf.__version__)"
@@ -35,115 +57,145 @@ llmf version
 
 ## Quick start
 
+### Simple API
+
 ```python
 import llmf
 
-# Auto provider + model
-llmf.chat("Summarize the CAP theorem in two sentences.")
-
-# Intent shortcuts: fast | best | code | vision | reasoning
-llmf.chat("Write a Python fibonacci function", model="code")
-
-# Fuzzy or explicit model ids
-llmf.chat("hi", model="llama")
+llmf.chat("Hello!")
+llmf.chat("Write fibonacci in Python", model="code")
+llmf.chat("hi", model="fast")          # aliases: fast | best | code | vision | reasoning
+llmf.chat("hi", model="llama")         # fuzzy name
 llmf.chat("hi", model="ovh/Meta-Llama-3.3-70B-Instruct")
-
-# Try models in order
 llmf.chat("hi", model=["best", "fast"])
 
-# Options
 llmf.chat(
-    "Return a JSON object with keys name and age",
-    system="You only output valid JSON",
-    max_tokens=300,
+    "Return JSON with keys name and age",
+    system="Only valid JSON",
+    max_tokens=256,
     temperature=0.2,
     json=True,
 )
 
-# Images (path, URL, or bytes)
-llmf.chat("Describe this image", images=["photo.jpg"], model="vision")
+llmf.chat("Describe this", images=["photo.jpg"], model="vision")
 
-# Streaming
-for chunk in llmf.stream("Count from 1 to 5"):
+for chunk in llmf.stream("Count 1 to 5"):
     print(chunk, end="", flush=True)
 ```
 
-`chat()` returns a **`Reply`**: behaves like a `str`, plus metadata (provider, model, attempts, …).
+`chat()` returns a **`Reply`**: acts like a `str`, plus provider/model/attempt metadata.
+
+### OpenAI-shaped API (0.3+)
+
+```python
+from llmf import LLMF
+
+llm = LLMF()
+r = llm.chat.completions.create(
+    model="best",
+    messages=[{"role": "user", "content": "Hello"}],
+)
+print(r.choices[0].message.content)
+print(r.usage)
+
+# Streaming
+for event in llm.chat.completions.create(model="fast", messages=[...], stream=True):
+    ...
+```
+
+Module helpers still work: `llmf.chat(...)`, `llmf.models()`, `llmf.providers()`, `llmf.health()`.
+
+```python
+llmf.models.list()
+llmf.models.check()       # doctor: real call per model (cached ~24h)
+llmf.models.resolve("fast")
+llmf.providers.list()
+llmf.health.check()
+```
 
 ---
 
 ## CLI
 
-```bash
-llmf "Your prompt here"
-llmf chat "Explain recursion" --model best
-llmf models              # built-in catalog
-llmf models --live       # probe providers (network)
+```text
+llmf "Your question"                 # one-shot ask
+llmf ask "..." -m best --stream
+llmf chat                            # interactive (/reset, /exit)
+llmf models                          # catalog
+llmf models list
+llmf models resolve fast
+llmf models check                    # live probe + health cache
+llmf doctor [--all] [--include-limited]
 llmf providers
 llmf health
+llmf serve [--port 8000] [--api-key SECRET]
 llmf version
 ```
 
-Local OpenAI-compatible proxy (stdlib HTTP server):
+Useful flags: `-m/--model`, `-p/--provider`, `-s/--system`, `--image`, `--max-tokens`, `-t/--temperature`, `--stream`, `--json`, `--routing ranked|adaptive`, `--race N`, `--proxy URL`.
+
+Local OpenAI-compatible server (default `127.0.0.1`, no CORS):
 
 ```bash
 llmf serve --port 8000
-# then: curl http://127.0.0.1:8000/v1/models
+curl http://127.0.0.1:8000/v1/models
 ```
 
-Defaults to `127.0.0.1` only. Use `--host 0.0.0.0` only with `--api-key`. Use `--cors` if a browser extension must call it.
+Bind `0.0.0.0` only together with `--api-key`.
 
 ---
 
-## API surface
+## Configuration
 
-| Function | Purpose |
-|----------|---------|
-| `llmf.chat(...)` | One-shot completion → `Reply` |
-| `llmf.stream(...)` | Token stream |
-| `llmf.achat` / `llmf.astream` | Async wrappers |
-| `llmf.session(system=...)` | Multi-turn conversation helper |
-| `llmf.models(live=False)` | List models |
-| `llmf.providers()` | List providers |
-| `llmf.health()` | Quick liveness checks |
-| `llmf.register(...)` | Add your own OpenAI-compatible base URL |
-| `llmf.discover()` | Opt-in scan for extra keyless endpoints |
-| `llmf.configure(...)` | Timeout, proxy, include/exclude providers |
-| `llmf.Client(...)` | Isolated client (no shared state) |
+| Mechanism | Examples |
+|-----------|----------|
+| **Code** | `llmf.configure(timeout=30, exclude=["blockrun"], routing="adaptive", race=2)` |
+| **Env** | `LLMF_TIMEOUT`, `LLMF_PROXY`, `LLMF_MODEL`, `LLMF_ROUTING` |
+| **Proxy** | HTTP(S) or SOCKS4/4a/5/5h (stdlib): `proxy="socks5h://127.0.0.1:9050"` |
+| **Custom endpoint** | `llmf.register("lab", "http://localhost:11434/v1", ["llama3"], front=True)` |
+| **Discovery** | `llmf.discover()` — opt-in scan for extra keyless bases |
 
-Environment (optional):
-
-| Variable | Effect |
-|----------|--------|
-| `LLMF_TIMEOUT` | Default request timeout (seconds) |
-| `LLMF_PROXY` | HTTP(S) proxy for all requests |
-| `LLMF_MODEL` | Default model preference |
+Isolated client (no shared state):
 
 ```python
-llmf.configure(timeout=30, exclude=["blockrun"])
-llmf.configure(proxy="http://127.0.0.1:8080")
-llmf.register("lab", "http://localhost:11434/v1", ["llama3"], front=True)
+from llmf import Client
+c = Client(timeout=20, routing="adaptive")
+c.chat("hi")
 ```
 
 ---
 
-## How fallback works
+## How it works
 
-1. Prefer endpoints that are fast and clean in practice.
-2. On failure, cool down that target (e.g. longer after HTTP 429).
-3. Strip thinking / stats noise; treat empty “success” bodies as failures.
-4. If every target fails → `llmf.AllProvidersFailed` with per-provider `.errors`.
+1. Build a **fallback plan** from aliases, explicit ids, and provider health.
+2. Prefer fast/clean targets; **cool down** failures (longer on HTTP 429).
+3. Optional **`routing="adaptive"`** uses latency EWMA; **`race=N`** hedges parallel requests.
+4. **`doctor` / `models.check()`** results are cached (~24h) to demote dead models.
+5. Strip thinking/stats noise; treat empty “HTTP 200” bodies as failures.
+6. If everything fails → `llmf.AllProvidersFailed` with `.errors` per provider.
 
-Built-in providers (availability changes over time): ChatJimmy, OVH, FreeAI, LLM7, Kilo/OpenRouter gateway, BlockRun, Pollinations, ChatAI, and others registered in the package. Always verify with `llmf health` / `llmf models --live`.
+Public free endpoints change often — use `llmf health` and `llmf doctor` to see what still works.
 
 ---
 
-## Safety notes
+## Safety
 
-- These are **public, unofficial, free** endpoints. They can rate-limit, change, or disappear without notice.
-- **Do not send secrets**, passwords, or personal data — prompts go to third-party servers.
-- `discover()` contacts external catalogs; treat it as opt-in.
-- Default local server binds to localhost and disables CORS on purpose.
+- Endpoints are **unofficial and free**. They may rate-limit, change, or vanish.
+- **Do not send secrets**, passwords, or personal data to third-party servers.
+- `discover()` contacts external catalogs; treat as opt-in.
+- Default `llmf serve` listens on localhost only.
+
+---
+
+## Project links
+
+| | |
+|--|--|
+| **Source** | https://github.com/MoonLite-Br/llmfree |
+| **Issues** | https://github.com/MoonLite-Br/llmfree/issues |
+| **Changelog** | [CHANGELOG.md](CHANGELOG.md) |
+| **PyPI** | https://pypi.org/project/llmf/ |
+| **License** | [MIT](LICENSE) |
 
 ---
 
@@ -156,10 +208,10 @@ python -m unittest discover -s tests -v
 python -m build && twine check dist/*
 ```
 
+Supported Python: **3.8–3.13**.
+
 ---
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
-
-**PyPI:** [pypi.org/project/llmf](https://pypi.org/project/llmf/) · **Source:** [github.com/MoonLite-Br/llmfree](https://github.com/MoonLite-Br/llmfree)
+MIT © 2026 Html / MoonLite-Br

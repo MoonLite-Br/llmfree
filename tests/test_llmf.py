@@ -329,9 +329,9 @@ class CLI(unittest.TestCase):
     def test_proxy_flag(self):
         code, out, _ = self.run_cli(["hi", "--proxy", BASE])
         self.assertEqual(code, 0)
-        code, _, err = self.run_cli(["hi", "--proxy", "socks5://1.2.3.4:1"])
+        code, _, err = self.run_cli(["hi", "--proxy", "ftp://1.2.3.4:1"])
         self.assertEqual(code, 2)
-        self.assertIn("proxy must be", err)
+        self.assertIn("proxy must look like", err)
 
     def test_commands_and_errors(self):
         self.assertEqual(self.run_cli(["providers"])[0], 0)
@@ -400,11 +400,71 @@ class Proxy(unittest.TestCase):
         with self.assertRaises(ValueError):
             llmf.Client(proxy="auto")
 
-    def test_rejects_socks(self):
-        with self.assertRaises(ValueError):
-            llmf.Client(proxy="socks5://1.2.3.4:1080")
+    def test_rejects_bad_proxy(self):
         with self.assertRaises(ValueError):
             llmf.Client().configure(proxy="1.2.3.4:80")
+
+
+class Socks(unittest.TestCase):
+    def setUp(self):
+        import socksserver
+        self.mk = socksserver.SocksServer
+        self.host, self.port = "127.0.0.1", int(BASE.rsplit(":", 1)[1])
+
+    def run_via(self, proxy_url, upstream="http://127.0.0.1:%d/v1"):
+        c = llmf.Client(builtin=False, deadline=10, retries=0, proxy=proxy_url)
+        c.register("up", upstream % self.port, "ok")
+        return c.chat("hi")
+
+    def test_socks5_ip_dest(self):
+        s = self.mk((self.host, self.port))
+        try:
+            self.assertEqual(self.run_via("socks5://127.0.0.1:%d" % s.port), "Echo: hi")
+            self.assertEqual(s.requests[-1][:2], ("5", 1))  # IPv4 address type
+        finally:
+            s.close()
+
+    def test_socks5h_sends_hostname_and_auth(self):
+        s = self.mk((self.host, self.port), creds=("bob", "pw"))
+        try:
+            r = self.run_via("socks5h://bob:pw@127.0.0.1:%d" % s.port, "http://remote.invalid:%d/v1")
+            self.assertEqual(r, "Echo: hi")
+            self.assertEqual(s.requests[-1], ("5", 3, "remote.invalid"))  # domain, resolved remotely
+            with self.assertRaises(llmf.AllProvidersFailed):
+                self.run_via("socks5://bob:WRONG@127.0.0.1:%d" % s.port)
+        finally:
+            s.close()
+
+    def test_socks4_and_4a(self):
+        s = self.mk((self.host, self.port))
+        try:
+            self.assertEqual(self.run_via("socks4://127.0.0.1:%d" % s.port), "Echo: hi")
+            r = self.run_via("socks4a://127.0.0.1:%d" % s.port, "http://remote.invalid:%d/v1")
+            self.assertEqual((r, s.requests[-1][2]), ("Echo: hi", "remote.invalid"))
+        finally:
+            s.close()
+
+    def test_streaming_through_socks_and_per_call(self):
+        s = self.mk((self.host, self.port))
+        try:
+            c = llmf.Client(builtin=False, deadline=10, retries=0)
+            c.register("up", "http://127.0.0.1:%d/v1" % self.port, "ok")
+            self.assertEqual("".join(c.stream("hi", proxy="socks5://127.0.0.1:%d" % s.port)),
+                             "Hello world")
+        finally:
+            s.close()
+
+    def test_dead_socks_proxy_is_a_clean_failure(self):
+        with self.assertRaises(llmf.AllProvidersFailed):
+            self.run_via("socks5://127.0.0.1:1")
+
+    def test_validation(self):
+        from llmf import _http
+        self.assertEqual(_http.check_proxy("socks5h://u:p@h:9"), "socks5h://u:p@h:9")
+        with self.assertRaises(ValueError):
+            _http.check_proxy("ftp://h:1")
+        with self.assertRaises(ValueError):
+            _http.check_proxy("socks5://")
 
 
 class Tools(unittest.TestCase):

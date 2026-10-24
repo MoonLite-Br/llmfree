@@ -42,8 +42,10 @@ BUILTIN: List[ProviderSpec] = [
         default_model="nvidia/nemotron-3-ultra-550b-a55b:free",
         models=[
             M("nvidia/nemotron-3-ultra-550b-a55b:free"),
-            M("nvidia/nemotron-3-super-120b-a12b:free"),
-            M("minimax/minimax-m3.1-flash:free"),
+            M("nvidia/nemotron-3-super-120b-a12b:free", verified=False, broken=True,
+              note="404 provider error (user test 2026-10-24)"),
+            M("minimax/minimax-m3.1-flash:free", verified=False, broken=True,
+              note="404 model not found (user test 2026-10-24)"),
             M("nvidia/nemotron-3.5-lightning:free"),
             M("cohere/north-mini-code:free"),
             M("nvidia/nemotron-3.5-super-vl:free", vision=True, verified=False),
@@ -78,7 +80,6 @@ BUILTIN: List[ProviderSpec] = [
             M("kilo-auto/free"),
             M("kilo-auto/small"),
             M("openrouter/free"),
-            M("minimax/minimax-m3.1-flash:free"),
             M("dots-studio/dots-3-note-preview:free"),
         ],
         note="Auto-routing gateway; no headers needed.",
@@ -146,6 +147,7 @@ BUILTIN: List[ProviderSpec] = [
             M("anthropic/claude-opus-5", verified=False),
             M("google/gemini-3.1-pro", verified=False),
         ],
+        checkable=False,
         note="Premium models but only ~3-5 requests/IP/day; last-resort in the chain.",
     ),
 ]
@@ -154,10 +156,9 @@ BUILTIN: List[ProviderSpec] = [
 TAGS: Dict[str, List[Tuple[str, str]]] = {
     "fast": [
         ("chatjimmy", "llama3.1-8B"),
-        ("kilo-gateway", "kilo-auto/small"),
-        ("ovh", "Qwen3.5-9B"),
-        ("kilo-openrouter", "minimax/minimax-m3.1-flash:free"),
+        ("ovh", "Meta-Llama-3_3-70B-Instruct"),
         ("llm7", "gpt-oss:20b"),
+        ("kilo-gateway", "kilo-auto/small"),
     ],
     "best": [
         ("kilo-openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"),

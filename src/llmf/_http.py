@@ -41,9 +41,15 @@ def decode_body(resp) -> str:
 
 
 def build_opener(proxy: Optional[str] = None, *handlers) -> urllib.request.OpenerDirector:
-    """Opener honouring an explicit HTTP(S) ``proxy`` (else the environment's proxies)."""
+    """Opener honouring an explicit ``proxy`` (http/https/socks*), else the environment's."""
     hs = list(handlers)
-    if proxy:
+    if proxy and proxy.lower().startswith("socks"):
+        from . import _socks  # lazy: only when a SOCKS proxy is used
+
+        sp = _socks.parse(proxy)
+        # ProxyHandler({}) switches off HTTP(S)_PROXY from the environment.
+        hs += [urllib.request.ProxyHandler({}), _socks.SocksHTTPHandler(sp), _socks.SocksHTTPSHandler(sp)]
+    elif proxy:
         hs.append(urllib.request.ProxyHandler({"http": proxy, "https": proxy}))
     return urllib.request.build_opener(*hs)
 
@@ -52,9 +58,14 @@ def check_proxy(proxy: Optional[str]) -> Optional[str]:
     if isinstance(proxy, str) and proxy.strip().lower() in ("auto", "rotate", "random"):
         raise ValueError("proxy='auto' is not supported: llmf never picks or rotates public "
                          "proxies for you. Pass your own proxy URL, e.g. http://host:port")
-    if proxy and not proxy.lower().startswith(("http://", "https://")):
-        raise ValueError("proxy must be an http:// or https:// URL (SOCKS is not supported "
-                         "by the standard library): %r" % proxy)
+    if proxy and not proxy.lower().startswith(("http://", "https://", "socks4://", "socks4a://",
+                                              "socks5://", "socks5h://")):
+        raise ValueError("proxy must look like http://host:port, https://host:port or "
+                         "socks5://host:port (also socks5h, socks4, socks4a): %r" % proxy)
+    if proxy and proxy.lower().startswith("socks"):
+        from . import _socks
+
+        _socks.parse(proxy)  # validate early
     return proxy
 
 

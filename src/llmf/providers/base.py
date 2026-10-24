@@ -18,6 +18,7 @@ class ModelSpec:
     verified: bool = True
     aliases: Tuple[str, ...] = ()
     note: str = ""
+    broken: bool = False  # known-dead: never picked automatically, still reachable as provider/model
 
 
 @dataclass
@@ -33,6 +34,7 @@ class ProviderSpec:
     min_interval: float = 0.0  # minimum seconds between requests
     aliases: Tuple[str, ...] = ()
     free_suffix: str = ""  # when listing live models, keep only ids with this suffix
+    checkable: bool = True  # False for tightly quota-limited services: doctor skips them
     note: str = ""
 
     @property

@@ -12,7 +12,6 @@ import hmac
 import json
 import sys
 import time
-import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
 
@@ -122,63 +121,47 @@ def make_handler(cfg: _Config):
                     raise
                 return None  # unknown name from a client app (e.g. "gpt-4o") -> automatic
 
+        PARAMS = ("max_tokens", "max_completion_tokens", "temperature", "top_p", "stop", "tools",
+                  "response_format")
+
         def _chat(self, body: dict, msgs: list) -> None:
             try:
                 model = self._model(body.get("model"))
             except ModelNotFound as e:
                 return self._json(404, _err(str(e), "invalid_request_error", "model_not_found"))
-            kw: Dict[str, Any] = {"model": model, "fallback": True if cfg.fallback else None,
-                                  "max_tokens": body.get("max_tokens") or body.get("max_completion_tokens"),
-                                  "temperature": body.get("temperature"), "top_p": body.get("top_p"),
-                                  "tools": body.get("tools") or None}
-            if body.get("stop") is not None:
-                kw["stop"] = body["stop"]
-            rf = body.get("response_format")
-            kw["json"] = isinstance(rf, dict) and rf.get("type") in ("json_object", "json_schema")
-            cid, created = "chatcmpl-" + uuid.uuid4().hex[:24], int(time.time())
+            kw: Dict[str, Any] = {k: body[k] for k in self.PARAMS if body.get(k) is not None}
+            kw["fallback"] = True if cfg.fallback else None
+            create = cfg.client.chat.completions.create
             try:
                 if body.get("stream"):
-                    return self._stream(msgs, kw, cid, created)
-                r = cfg.client.chat(msgs, **kw)
+                    return self._stream(create(messages=msgs, model=model, stream=True, **kw))
+                comp = create(messages=msgs, model=model, **kw)
             except AllProvidersFailed as e:
                 return self._json(502, _err(str(e), "upstream_error", "all_providers_failed"))
             except (LLMFError, ValueError) as e:
                 return self._json(400, _err(str(e), "invalid_request_error"))
-            message: Dict[str, Any] = {"role": "assistant", "content": r.text}
-            if r.reasoning:
-                message["reasoning"] = r.reasoning
-            if r.tool_calls:
-                message["tool_calls"] = r.tool_calls
-            usage = r.usage or {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
-            self._json(200, {"id": cid, "object": "chat.completion", "created": created,
-                             "model": r.source, "choices": [{"index": 0, "message": message,
-                                                              "finish_reason": r.finish_reason or "stop"}],
-                             "usage": usage})
+            self._json(200, comp.to_dict())
 
-        def _stream(self, msgs: list, kw: dict, cid: str, created: int) -> None:
-            st = cfg.client.stream(msgs, **kw)
-            it = iter(st)
+        def _stream(self, stream) -> None:
+            it = iter(stream)
             try:
-                first = next(it)  # fallback happens here, before any bytes are sent
-            except StopIteration:
-                return self._json(502, _err("empty answer", "upstream_error", "empty"))
+                first = next(it)  # fallback between providers happens here, before any bytes
+            except AllProvidersFailed as e:
+                return self._json(502, _err(str(e), "upstream_error", "all_providers_failed"))
+            except LLMFError as e:
+                return self._json(400, _err(str(e), "invalid_request_error"))
             self._headers(200, "text/event-stream")
 
-            def send(delta: dict, finish: Optional[str] = None) -> None:
-                chunk = {"id": cid, "object": "chat.completion.chunk", "created": created,
-                         "model": "%s/%s" % (st.provider, st.model),
-                         "choices": [{"index": 0, "delta": delta, "finish_reason": finish}]}
-                self.wfile.write(b"data: " + json.dumps(chunk, ensure_ascii=False).encode() + b"\n\n")
+            def send(obj: Any) -> None:
+                self.wfile.write(b"data: " + json.dumps(obj, ensure_ascii=False).encode() + b"\n\n")
                 self.wfile.flush()
 
-            send({"role": "assistant", "content": ""})
-            send({"content": first})
+            send(first.to_dict())
             try:
-                for piece in it:
-                    send({"content": piece})
-                send({}, "stop")
+                for chunk in it:
+                    send(chunk.to_dict())
             except LLMFError as e:
-                self.wfile.write(b"data: " + json.dumps(_err(str(e), "upstream_error")).encode() + b"\n\n")
+                send(_err(str(e), "upstream_error"))
             self.wfile.write(b"data: [DONE]\n\n")
             self.wfile.flush()
 

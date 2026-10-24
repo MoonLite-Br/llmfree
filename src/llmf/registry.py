@@ -50,7 +50,12 @@ class Registry:
         return _dedupe(self._front_chain + core + self._extra_chain)
 
     def tag(self, name: str) -> List[Target]:
-        return [t for t in self._tags.get(name, []) if t.provider in self.providers]
+        out = []
+        for t in self._tags.get(name, []):
+            m = self.model_spec(*t)
+            if t.provider in self.providers and not (m and m.broken):
+                out.append(t)
+        return out
 
     def tag_add(self, name: str, target: Target) -> None:
         self._tags.setdefault(name, []).append(target)
@@ -125,6 +130,8 @@ class Registry:
             if only and n != only:
                 continue
             for m in s.models:
+                if m.broken:
+                    continue
                 names = [m.id] + list(m.aliases)
                 keys = {_norm(x) for x in names} | {_tail(x) for x in names}
                 if nq in keys:

@@ -46,7 +46,7 @@ class Registry:
     def chain(self) -> List[Target]:
         """Default fallback chain: custom-front, builtin defaults in rank order, custom."""
         builtin_names = {s.name for s in BUILTIN}
-        core = [Target(n, s.default) for n, s in self.providers.items() if n in builtin_names]
+        core = [Target(n, s.default) for n, s in self.providers.items() if n in builtin_names and s.auto]
         return _dedupe(self._front_chain + core + self._extra_chain)
 
     def tag(self, name: str) -> List[Target]:

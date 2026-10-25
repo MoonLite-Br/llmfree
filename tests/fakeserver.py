@@ -47,6 +47,10 @@ class Handler(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         body = json.loads(self.rfile.read(n) or b"{}")
         Handler.calls.append((self.path, body, dict(self.headers)))
+        if self.path == "/api/dispatch":
+            return self._nottrack(body)
+        if self.path.startswith("/v1/chat/completions/") and not self.headers.get("Origin"):
+            return self._send(403, '{"error":"origin required"}')
         if self.path == "/api/chat" and "chatOptions" not in body:
             return self._chatai(body)
         if self.path == "/api/chat":
@@ -59,6 +63,21 @@ class Handler(BaseHTTPRequestHandler):
         if self.path.endswith("/runs/wait"):
             return self._langchain(body)
         return self._openai(body)
+
+    # -- nottrack: SSE with several speakers; "user_input" is the only accepted field
+    def _nottrack(self, body):
+        if "user_input" not in body:
+            return self._send(400, '{"error":"bad request"}')
+        ev = [{"type": "chat_meta", "chat_id": "c1", "mode": "debate"},
+              {"type": "user", "turn": 0, "content": body["user_input"]},
+              {"type": "thinking", "speaker": "A", "turn": 1},
+              {"type": "delta", "speaker": "A", "turn": 1, "chunk": "Hel"},
+              {"type": "delta", "speaker": "A", "turn": 1, "chunk": "lo"},
+              {"type": "delta", "speaker": "B", "turn": 2, "chunk": "World"}]
+        if body["user_input"] == "boom":
+            ev = [{"type": "error", "message": "upstream down"}]
+        data = "".join("data: " + json.dumps(e) + "\n\n" for e in ev)
+        self._send(200, data, "text/event-stream")
 
     # -- chatai: needs the cookie + matching CSRF header from GET /chat
     def _chatai(self, body):

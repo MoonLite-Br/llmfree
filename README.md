@@ -12,9 +12,8 @@
 import llmf
 
 r = llmf.chat("Explain the CAP theorem in two sentences.")
-print(r)              # Reply is a str subclass
-print(r.source)       # "provider/model"
-print(r.provider, r.model, round(r.latency, 3), r.usage)
+print(r)           # Reply is a str subclass
+print(r.source)    # "provider/model"
 ```
 
 ---
@@ -23,7 +22,7 @@ print(r.provider, r.model, round(r.latency, 3), r.usage)
 
 ```text
 Name: llmf
-Version: 0.4.1
+Version: 0.5.0
 Summary: llmf (llmfree): free, keyless LLM chat with automatic multi-provider fallback — stdlib only.
 Home-page: https://github.com/MoonLite-Br/llmfree
 Author: Html
@@ -58,14 +57,12 @@ import llmf
 
 r = llmf.chat("Hello!")
 r.text, r.source, r.provider, r.model, r.latency, r.usage, r.attempts
-```
 
-**`model=` aliases:** `fast` | `best` | `code` | `vision` | `reasoning`  
-Also fuzzy names, full `provider/id`, or a list tried in order.
-
-```python
-llmf.chat("hi", model="code", max_tokens=256)
+llmf.chat("hi", model="best")          # aliases: fast | best | code | vision | reasoning
+llmf.chat("hi", model=["best", "fast"])
 llmf.chat("Describe this", images=["photo.jpg"], model="vision")
+llmf.chat("…", provider="ch-at")       # force a provider (incl. opt-in ones)
+
 for piece in llmf.stream("Count 1 to 5"):
     print(piece, end="", flush=True)
 ```
@@ -81,16 +78,17 @@ c = llm.chat.completions.create(
     messages=[{"role": "user", "content": "Hello"}],
 )
 print(c.choices[0].message.content)
+print(c.model, c.provider, c.usage, c.latency)
 ```
 
 ### Catalog & config
 
 ```python
 llmf.models.list()
-llmf.models.list(live=True)                 # chat/free only by default
+llmf.models.list(live=True)                              # chat/free by default
 llmf.models.list(live=True, include_non_chat=True)
-llmf.models.resolve("fast")
-llmf.models.check()                         # doctor; ~24h cache
+llmf.models.resolve("best")
+llmf.models.check()
 llmf.providers.list()
 llmf.health.check()
 llmf.configure(timeout=30, vision_timeout=90, routing="adaptive", race=2)
@@ -109,10 +107,10 @@ llmf chat
 llmf models [list|check|resolve NAME]
 llmf doctor [--all] [--include-non-chat] [--include-limited] [--no-save]
 llmf providers | health | version
-llmf serve [--host 127.0.0.1] [--port 8000] [--api-key …] [--cors]
+llmf serve [--port 8000] [--api-key …] [--cors]
 ```
 
-Flags: `-m/--model`, `-p/--provider`, `-s/--system`, `--image`, `--max-tokens`, `-t/--temperature`, `--stream`, `--json`, `-v`, `--routing ranked|adaptive`, `--race N`, `--timeout`, `--proxy`, `--live`, `--all`, `--include-limited`, `--include-non-chat`, `--no-save`, serve options (`--strict-models`, `--no-fallback`, …).
+Flags: `-m/--model`, `-p/--provider`, `-s/--system`, `--image`, `--stream`, `--json`, `-v`, `--routing`, `--race`, `--timeout`, `--proxy`, `--live`, `--all`, `--include-non-chat`, …
 
 ```text
 $ llmf -v "2+2=?"
@@ -123,20 +121,19 @@ $ llmf serve --port 8000
 
 ---
 
-## What’s new in 0.4.1
+## What’s new in 0.5.0
 
-- Capacity vs “paid model” messages on BlockRun: capacity wins (≈10 min sleep), not hours.
-- `Retry after N seconds` → cooldown ≈ 3×N (not flat 60s); llm7 `min_interval=1.1`.
-- OVH default model → `gpt-oss-120b` (faster anonymous tier).
-- Live-id filter drops more freeai utility models (madlad, realesrgan, rmbg, …).
+- **New providers:** `ch-at` (e.g. GPT-4o, early in chain / `best`), `rewind-ai` (Qwen / gpt-4o-mini; sign-in-only models marked broken), `nottrack` (SSE “debate” adapter — **opt-in only**, not in the automatic chain; use `provider="nottrack"`).
+- **`ProviderSpec.auto=False`:** provider stays out of auto-fallback but remains callable with `provider=`.
+- BlockRun defaults / models updated; Pollinations `openai-fast` is an alias of `openai`.
 
-See [CHANGELOG.md](CHANGELOG.md) for 0.4.0 behaviour (429 classes, chat/free live catalog, dynamic `fast`, `vision_timeout`).
+Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
 ## Safety
 
-Unofficial free endpoints may change or rate-limit. Do not send secrets. `discover()` is opt-in. `llmf serve` defaults to localhost.
+Unofficial free endpoints may change or rate-limit. Do not send secrets. Opt-in providers and `discover()` are explicit. `llmf serve` defaults to localhost.
 
 ---
 

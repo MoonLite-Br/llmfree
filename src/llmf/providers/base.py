@@ -35,6 +35,7 @@ class ProviderSpec:
     min_interval: float = 0.0  # minimum seconds between requests
     aliases: Tuple[str, ...] = ()
     free_suffix: str = ""  # when listing live models, keep only ids with this suffix
+    auto: bool = True  # False: only used when named explicitly, never in the automatic chain
     checkable: bool = True  # False for tightly quota-limited services: doctor skips them
     note: str = ""
 

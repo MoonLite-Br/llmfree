@@ -84,7 +84,8 @@ class Catalogue(unittest.TestCase):
         reg = llmf.Client(use_cache=False)._reg
         self.assertEqual([str(t.model) for t in reg.tag("fast")][:3],
                          ["minimax-m2.7", "codestral-latest", "llama3.1-8B"])
-        self.assertEqual(reg.tag("best")[0].model, "nvidia/nemotron-3-ultra-550b-a55b:free")
+        self.assertEqual(reg.tag("best")[0].provider, "ch-at")
+        self.assertEqual(reg.tag("best")[1].model, "nvidia/nemotron-3-ultra-550b-a55b:free")
         self.assertNotIn("Meta-Llama-3_3-70B-Instruct", [t.model for t in reg.tag("fast")])
 
 
@@ -314,7 +315,48 @@ class DynamicFast(unittest.TestCase):
     def test_other_tags_stay_static(self):
         c = LLMF(use_cache=False)
         c._state.ok(llmf.client.Target("ovh", "Qwen3.5-9B"), 0.1)
-        self.assertEqual(c._plan("best", None, False)[0].model, "nvidia/nemotron-3-ultra-550b-a55b:free")
+        self.assertEqual(c._plan("best", None, False)[0].model, "gpt-4o")
+
+
+class NewProviders(unittest.TestCase):
+    def test_catalogue_entries(self):
+        c = LLMF(use_cache=False)
+        spec = c._reg.providers
+        self.assertTrue(spec["rewind-ai"].chat_url.endswith("/v1/chat/completions/"))
+        self.assertEqual(spec["rewind-ai"].headers["Origin"], "https://rewind.ai")
+        self.assertEqual([m.id for m in spec["ch-at"].models], ["gpt-4o"])
+        self.assertFalse(spec["nottrack"].auto)
+        self.assertNotIn("nottrack", [t.provider for t in c._reg.chain()])
+        self.assertEqual(c.models.resolve("gpt-4o")[0], "ch-at/gpt-4o")
+        self.assertEqual(c.models.resolve("rewind/gpt-4o-mini")[0], "rewind-ai/gpt-4o-mini")
+        with self.assertRaises(llmf.ModelNotFound):
+            c.models.resolve("qwen-2.5-72b")   # sign-in only -> never picked by fuzzy matching
+        self.assertEqual(spec["pollinations"].models[0].aliases[0], "openai-fast")
+        self.assertEqual(c.models.resolve("blockrun")[0], "blockrun/nvidia/nemotron-3.5-lightning")
+
+    def make(self, **kw):
+        c = LLMF(builtin=False, retries=0, use_cache=False, **kw)
+        c.register("nottrack", BASE, "debate", kind="nottrack", chat_path="/api/dispatch")
+        return c
+
+    def test_nottrack_joins_deltas_and_separates_speakers(self):
+        r = self.make().chat("hi")
+        self.assertEqual(str(r), "Hello\n\nWorld")
+        self.assertEqual(r.provider, "nottrack")
+        _path, body, _h = fakeserver.Handler.calls[-1]
+        self.assertEqual(body, {"user_input": "hi"})
+
+    def test_nottrack_transcript_for_multi_turn(self):
+        self.make().chat([{"role": "user", "content": "I am Minh"}, {"role": "assistant", "content": "Hi"},
+                          {"role": "user", "content": "Who am I?"}])
+        body = fakeserver.Handler.calls[-1][1]
+        self.assertEqual(body["user_input"], "User: I am Minh\nAssistant: Hi\nUser: Who am I?")
+
+    def test_nottrack_stream_and_error_event(self):
+        c = self.make()
+        self.assertEqual("".join(c.stream("hi")), "Hello\n\nWorld")
+        with self.assertRaises(llmf.AllProvidersFailed):
+            c.chat("boom")
 
 
 class Startup(unittest.TestCase):

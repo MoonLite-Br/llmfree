@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0
+- New providers: `ch-at` (GPT-4o, no auth, no /models; first in the chain and in the `best` tag), `rewind-ai`
+  (`qwen/qwen-2.5-7b-instruct`, `gpt-4o-mini`; trailing-slash path + `Origin` header; sign-in-only models are marked broken),
+  and `nottrack` (SSE "debate" endpoint, new `nottrack` adapter; **opt-in only**: never in the automatic chain).
+- `ProviderSpec.auto=False` keeps a provider out of the automatic chain (still usable with `provider=`).
+- BlockRun: default model is now `nemotron-3.5-lightning`; added `laguna-xs-2.1`, `muse-glimmer-30b`.
+- Pollinations: `openai-fast` is an alias of `openai` (they are the same model).
+
 ## 0.4.1
 - Fix: "capacity exhausted ... or use a paid model" (BlockRun) was read as *paid* and put the model to sleep for
   hours; capacity now wins (10 min). `cohere/north-mini-code` on BlockRun is no longer marked broken.

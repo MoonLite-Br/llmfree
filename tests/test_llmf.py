@@ -146,7 +146,7 @@ class Resolve(unittest.TestCase):
 
     def test_builtin_chain_matches_docs(self):
         names = [t.provider for t in self.reg.chain()]
-        self.assertEqual(names, ["ovh", "kilo-openrouter", "freeai", "chatjimmy", "kilo-gateway",
+        self.assertEqual(names, ["ch-at", "rewind-ai", "ovh", "kilo-openrouter", "freeai", "chatjimmy", "kilo-gateway",
                                  "pollinations", "llm7", "blockrun", "chatai"])
 
     def test_tags_reference_real_models(self):

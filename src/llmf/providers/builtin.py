@@ -15,6 +15,31 @@ _KILO_HEADERS = {"Authorization": "Bearer anonymous", "X-KILOCODE-EDITORNAME": "
 
 BUILTIN: List[ProviderSpec] = [
     ProviderSpec(
+        name="ch-at",
+        base_url="https://ch.at",
+        chat_path="/v1/chat/completions",
+        aliases=("ch.at",),
+        default_model="gpt-4o",
+        min_interval=0.6,                      # documented 100 req/min, burst 10
+        models=[M("gpt-4o", aliases=("gpt4o", "4o"))],
+        note="GPT-4o, no auth, no /models endpoint (only gpt-4o). Documented 100 req/min.",
+    ),
+    ProviderSpec(
+        name="rewind-ai",
+        base_url="https://api.rewind.ai",
+        chat_path="/v1/chat/completions/",     # the trailing slash is required
+        headers={"Origin": "https://rewind.ai"},
+        aliases=("rewind",),
+        default_model="qwen/qwen-2.5-7b-instruct",
+        models=[
+            M("qwen/qwen-2.5-7b-instruct", aliases=("qwen-2.5-7b",)),
+            M("gpt-4o-mini", aliases=("4o-mini",)),
+            M("meta-llama/llama-3.1-8b-instruct", verified=False, broken=True, note="needs sign-in"),
+            M("qwen/qwen-2.5-72b-instruct", verified=False, broken=True, note="needs sign-in"),
+        ],
+        note="Anonymous JWT is issued by the server (30 days); 50/50 requests in 15 s passed.",
+    ),
+    ProviderSpec(
         name="ovh",
         base_url="https://oai.endpoints.kepler.ai.cloud.ovh.net",
         chat_path="/v1/chat/completions",
@@ -108,7 +133,7 @@ BUILTIN: List[ProviderSpec] = [
         aliases=("poll",),
         min_interval=15.0,
         default_model="openai",
-        models=[M("openai", aliases=("gpt-oss", "gpt-oss-20b"))],
+        models=[M("openai", aliases=("openai-fast", "gpt-oss", "gpt-oss-20b"))],
         note="Anonymous tier: 1 request / 15 s.",
     ),
     ProviderSpec(
@@ -131,16 +156,31 @@ BUILTIN: List[ProviderSpec] = [
         base_url="https://blockrun.ai",
         chat_path="/api/v1/chat/completions",
         models_path="/api/v1/models",
-        default_model="nvidia/nemotron-3-ultra-550b",
+        default_model="nvidia/nemotron-3.5-lightning",
         models=[
-            M("nvidia/nemotron-3-ultra-550b"),
+            M("nvidia/nemotron-3.5-lightning"),
+            M("poolside/laguna-xs-2.1", verified=False),
+            M("nvidia/muse-glimmer-30b", verified=False),
+            M("nvidia/nemotron-3-ultra-550b", note="best quality but often 429 capacity / 10-50 s"),
             M("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"),
             M("nvidia/llama-3.2-11b-vision", vision=True),
-            M("nvidia/nemotron-3.5-lightning"),
             M("cohere/north-mini-code", verified=False,
               note="answered once, later 429 capacity (shared NVIDIA pool); cooled down, not broken"),
         ],
         note="Upstream times out after ~12 s, so it can be flaky.",
+    ),
+    ProviderSpec(
+        name="nottrack",
+        base_url="https://nottrack.com",
+        chat_path="/api/dispatch",
+        kind="nottrack",
+        headers={"Origin": "https://nottrack.com"},
+        aliases=("nottrack-com", "nottrack.com"),
+        default_model="debate",
+        models=[M("debate", note="multi-speaker, uncensored role-play; long replies")],
+        auto=False,
+        checkable=False,
+        note="Opt-in only (provider=\"nottrack\"): several speakers answer in a debate; use timeout >= 60 s.",
     ),
     ProviderSpec(
         name="chatai",
@@ -174,6 +214,7 @@ TAGS: Dict[str, List[Tuple[str, str]]] = {
         ("kilo-gateway", "kilo-auto/small"),
     ],
     "best": [
+        ("ch-at", "gpt-4o"),
         ("kilo-openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"),
         ("blockrun", "nvidia/nemotron-3-ultra-550b"),
         ("ovh", "gpt-oss-120b"),
@@ -183,6 +224,7 @@ TAGS: Dict[str, List[Tuple[str, str]]] = {
     "code": [
         ("kilo-openrouter", "cohere/north-mini-code:free"),
         ("llm7", "codestral-latest"),
+        ("ch-at", "gpt-4o"),
         ("freeai", "qwen-coder"),
         ("ovh", "Qwen3.5-397B-A17B"),
         ("kilo-openrouter", "nvidia/nemotron-3-ultra-550b-a55b:free"),

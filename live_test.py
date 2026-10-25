@@ -94,7 +94,7 @@ def provider_names():
 
 
 PROVIDERS, _PROBE = provider_names()
-LIMITED = {"chatai"}
+LIMITED = {"chatai", "nottrack"}   # quota-limited or very long answers: opt-in via --include-chatai
 
 
 def make_png(w=96, h=96, rgb=(220, 20, 20)):

@@ -26,6 +26,7 @@ BUILTIN: List[ProviderSpec] = [
         aliases=("ch.at",),
         default_model="gpt-4o",
         min_interval=0.6,                      # documented 100 req/min, burst 10
+        concurrency=8,
         models=[M("gpt-4o", aliases=("gpt4o", "4o"))],
         note="GPT-4o, no auth, no /models endpoint (only gpt-4o). Documented 100 req/min.",
     ),
@@ -127,6 +128,7 @@ BUILTIN: List[ProviderSpec] = [
         models_path="/models",
         aliases=("poll",),
         min_interval=15.0,
+        concurrency=1,
         default_model="openai",
         models=[M("openai", aliases=("openai-fast", "gpt-oss", "gpt-oss-20b"))],
         note="Anonymous tier: 1 request / 15 s.",
@@ -139,6 +141,7 @@ BUILTIN: List[ProviderSpec] = [
         aliases=("llm7.io",),
         default_model="gpt-oss:20b",
         min_interval=1.1,                      # 429 "Retry after 1 seconds" on back-to-back calls
+        concurrency=3,
         models=[
             M("gpt-oss:20b", aliases=("gpt-oss",)),
             M("codestral-latest", note="code model, fast"),

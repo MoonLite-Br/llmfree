@@ -1,7 +1,17 @@
 # Changelog
 
+## 0.6.2
+- Release packaging: full English README, correct GitHub/PyPI URLs, static version badges.
+- Ships the load-aware routing + serve concurrency work documented under 0.6.1.
+
 ## 0.6.1
-- Docs: static version badges on PyPI README (avoid shields.io stale pypi/v cache).
+- **Load-aware routing** (threads, `race`, `llmf serve`): each provider has a cap of simultaneous requests
+  (`Client(max_inflight=6)`, per-provider `ProviderSpec.concurrency`: ch-at 8, llm7 3, pollinations 1). Extra calls no
+  longer queue behind a busy or rate-slotted provider; they spill to the next one, re-ranked live. On a local benchmark
+  (30 threads, slow first provider) mean latency went 1.40 s -> 0.62 s and p50 1.25 s -> 0.18 s.
+- `llmf serve`: `--max-concurrent N` (default 48) answers `429 {"code": "busy"}` + `Retry-After: 1` instead of letting
+  clients time out in a queue; listen backlog raised from the stdlib's 5 to 128 (bursts stalled 7-11 s in the connect phase).
+- `llmf serve --host 8000` (port in the host slot) now prints a one-line hint instead of a traceback; same for "port in use".
 
 ## 0.6.0
 - **Vetted catalogue**: a model stays only if it answered in >= 2 independent real-network runs with >= 75 % success.

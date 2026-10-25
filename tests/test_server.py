@@ -153,3 +153,53 @@ class Options(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LoadShedding(unittest.TestCase):
+    def test_busy_server_answers_429_immediately(self):
+        c = llmf.Client(builtin=False, deadline=10, retries=0)
+        c.register("fake", UPBASE + "/v1", ["slow", "ok"])
+        srv = make_server(c, "127.0.0.1", 0, max_concurrent=1)
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        base = "http://127.0.0.1:%d" % srv.server_address[1]
+        out = {}
+
+        def first():
+            out["a"] = call(base + "/v1/chat/completions",
+                            {"model": "fake/slow", "messages": [{"role": "user", "content": "hi"}]})
+
+        t = threading.Thread(target=first)
+        t.start()
+        import time
+        time.sleep(0.4)                       # the slow upstream (1.2 s) is now holding the only slot
+        code, body, headers = call(base + "/v1/chat/completions",
+                                   {"model": "fake/ok", "messages": [{"role": "user", "content": "hi"}]})
+        t.join()
+        self.assertEqual(code, 429)
+        self.assertEqual(headers.get("Retry-After"), "1")
+        self.assertEqual(json.loads(body)["error"]["code"], "busy")
+        self.assertEqual(out["a"][0], 200)    # the request that was admitted still completes
+        code, _b, _h = call(base + "/v1/chat/completions",
+                            {"model": "fake/ok", "messages": [{"role": "user", "content": "hi"}]})
+        self.assertEqual(code, 200)           # slot released
+        srv.shutdown()
+        srv.server_close()
+
+    def test_backlog_is_larger_than_the_stdlib_default(self):
+        c = llmf.Client(builtin=False)
+        srv = make_server(c, "127.0.0.1", 0)
+        self.assertGreaterEqual(srv.request_queue_size, 64)
+        srv.server_close()
+
+
+class BindErrors(unittest.TestCase):
+    def test_port_in_host_slot_gives_a_clean_hint(self):
+        import contextlib
+        import io
+        from llmf import cli
+        err = io.StringIO()
+        with contextlib.redirect_stderr(err):
+            rc = cli.main(["serve", "--host", "8000", "--port", "0"])
+        self.assertEqual(rc, 2)
+        self.assertIn("did you mean `--port 8000`", err.getvalue())
+        self.assertNotIn("Traceback", err.getvalue())

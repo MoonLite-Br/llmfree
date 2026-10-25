@@ -33,6 +33,19 @@ class _State:
         self._last: Dict[str, float] = {}
         self._ewma: Dict[Target, float] = {}
         self._demoted = set()
+        self._busy: Dict[str, int] = {}
+
+    def enter(self, provider: str) -> None:
+        with self._lock:
+            self._busy[provider] = self._busy.get(provider, 0) + 1
+
+    def leave(self, provider: str) -> None:
+        with self._lock:
+            self._busy[provider] = max(0, self._busy.get(provider, 0) - 1)
+
+    def busy(self, provider: str) -> int:
+        with self._lock:
+            return self._busy.get(provider, 0)
 
     def ready_in(self, target: Target, min_interval: float) -> float:
         now = time.monotonic()
@@ -95,12 +108,15 @@ class _State:
         with self._lock:
             return self._ewma.get(target)
 
-    def order(self, targets: List[Target], intervals: Dict[str, float], adaptive: bool = False) -> List[Target]:
+    def order(self, targets: List[Target], intervals: Dict[str, float], adaptive: bool = False,
+              caps: Optional[Dict[str, int]] = None) -> List[Target]:
+        """Ready targets first (stable); cooling, demoted, rate-slot-busy or *saturated* ones after."""
         ready, later = [], []
         for i, t in enumerate(targets):
             with self._lock:
                 demoted = t in self._demoted
-            bad = demoted or self.ready_in(t, intervals.get(t.provider, 0.0)) > 0
+                full = bool(caps) and self._busy.get(t.provider, 0) >= caps.get(t.provider, 1 << 30)
+            bad = demoted or full or self.ready_in(t, intervals.get(t.provider, 0.0)) > 0
             (later if bad else ready).append((i, t))
         if adaptive:
             with self._lock:
@@ -298,6 +314,8 @@ class Client:
         timeout: seconds per HTTP request.
         deadline: overall seconds budget for one call, across all fallbacks.
         max_attempts: hard cap on tries per call.
+        max_inflight: simultaneous requests per provider before extra calls spill to the next provider
+            (matters for threads / ``llmf serve`` under load; a provider can override it).
         retries: extra passes over the candidates for *transient* errors.
         max_tokens: default answer budget (reasoning models need >= 200).
         routing: ``"ranked"`` (fixed fallback order) or ``"adaptive"`` (fastest observed first).
@@ -313,7 +331,7 @@ class Client:
     """
 
     def __init__(self, *, model: ModelArg = None, timeout: float = 60.0, deadline: float = 180.0,
-                 max_attempts: int = 8, retries: int = 1, max_tokens: int = 1024,
+                 max_attempts: int = 8, retries: int = 1, max_inflight: int = 6, max_tokens: int = 1024,
                  temperature: Optional[float] = None, only: Optional[Sequence[str]] = None,
                  exclude: Sequence[str] = (), builtin: bool = True,
                  user_agent: str = _http.DEFAULT_UA, proxy: Optional[str] = None,
@@ -327,6 +345,7 @@ class Client:
         self.timeout = timeout
         self.deadline = deadline
         self.max_attempts = max_attempts
+        self.max_inflight = max(1, int(max_inflight))
         self.retries = retries
         self.max_tokens = max_tokens
         self.temperature = temperature
@@ -557,6 +576,13 @@ class Client:
         intervals = {n: s.min_interval for n, s in reg.providers.items()}
         return self._state.order(plan, intervals, self.routing == "adaptive" or is_fast)
 
+    def _reorder(self, rest: List[Target]) -> List[Target]:
+        """Live re-ranking of what is left to try: busy / cooling providers go to the back."""
+        provs = self._reg.providers
+        intervals = {n: s.min_interval for n, s in provs.items()}
+        caps = {n: (s.concurrency or self.max_inflight) for n, s in provs.items()}
+        return self._state.order(rest, intervals, False, caps)
+
     def _sequence(self, plan: List[Target]) -> List[Target]:
         seq: List[Target] = []
         for _ in range(1 + max(0, self.retries)):
@@ -574,6 +600,7 @@ class Client:
         spec = self._reg.providers[t.provider]
         self._throttle(spec, end - time.monotonic())
         t0 = time.monotonic()
+        self._state.enter(t.provider)
         try:
             comp = ADAPTERS[spec.kind].complete(spec, t.model, messages, opts,
                                                 max(1.0, min(opts.timeout or self.timeout, end - time.monotonic())))
@@ -583,6 +610,8 @@ class Client:
             errors.append(e)
             attempts.append(Attempt(t.provider, t.model, False, time.monotonic() - t0, str(e)))
             return None, e
+        finally:
+            self._state.leave(t.provider)
         lat = time.monotonic() - t0
         self._state.ok(t, lat)
         attempts.append(Attempt(t.provider, t.model, True, lat))
@@ -634,6 +663,7 @@ class Client:
         seq = self._sequence(plan)
         pos, last_pass = 0, 0
         while pos < len(seq):
+            seq[pos:] = self._reorder(seq[pos:])
             batch: List[Target] = []
             while pos < len(seq) and len(batch) < width:
                 t = seq[pos]
@@ -694,7 +724,9 @@ class Client:
             dead = set()
             end = time.monotonic() + self.deadline
             seq = self._sequence(plan)
-            for i, t in enumerate(seq):
+            for i in range(len(seq)):
+                seq[i:] = self._reorder(seq[i:])
+                t = seq[i]
                 if t in dead:
                     continue
                 left = end - time.monotonic()
@@ -704,40 +736,44 @@ class Client:
                     time.sleep(min(1.0, left / 4))
                 spec = self._reg.providers[t.provider]
                 self._throttle(spec, left)
-                t0 = time.monotonic()
-                it = ADAPTERS[spec.kind].stream(spec, t.model, messages, opts,
-                                                min(opts.timeout or self.timeout, end - time.monotonic()))
+                self._state.enter(t.provider)
                 try:
-                    first = next(it)
-                except StopIteration:
-                    first = None
-                    e: Optional[ProviderError] = ProviderError(t.provider, t.model, "empty stream",
-                                                                status=200, code="empty")
-                except ProviderError as pe:
-                    first, e = None, pe
-                else:
-                    e = None
-                if e is not None:
-                    self._state.fail(e)
-                    errors.append(e)
-                    attempts.append(Attempt(t.provider, t.model, False, time.monotonic() - t0, str(e)))
-                    if not e.retryable:
-                        dead.add(t)
-                    continue
-                st.provider, st.model = t.provider, t.model
-                self._state.ok(t, time.monotonic() - t0)  # time-to-first-chunk
-                yield first
-                try:
-                    for chunk in it:
-                        yield chunk
-                except ProviderError as pe:
-                    self._state.fail(pe)
-                    raise
-                lat = time.monotonic() - t0
-                attempts.append(Attempt(t.provider, t.model, True, lat))
-                st.reply = Reply("".join(st._parts).strip(), provider=t.provider, model=t.model,
-                                 latency=lat, attempts=attempts)
-                return
+                    t0 = time.monotonic()
+                    it = ADAPTERS[spec.kind].stream(spec, t.model, messages, opts,
+                                                    min(opts.timeout or self.timeout, end - time.monotonic()))
+                    try:
+                        first = next(it)
+                    except StopIteration:
+                        first = None
+                        e: Optional[ProviderError] = ProviderError(t.provider, t.model, "empty stream",
+                                                                    status=200, code="empty")
+                    except ProviderError as pe:
+                        first, e = None, pe
+                    else:
+                        e = None
+                    if e is not None:
+                        self._state.fail(e)
+                        errors.append(e)
+                        attempts.append(Attempt(t.provider, t.model, False, time.monotonic() - t0, str(e)))
+                        if not e.retryable:
+                            dead.add(t)
+                        continue
+                    st.provider, st.model = t.provider, t.model
+                    self._state.ok(t, time.monotonic() - t0)  # time-to-first-chunk
+                    yield first
+                    try:
+                        for chunk in it:
+                            yield chunk
+                    except ProviderError as pe:
+                        self._state.fail(pe)
+                        raise
+                    lat = time.monotonic() - t0
+                    attempts.append(Attempt(t.provider, t.model, True, lat))
+                    st.reply = Reply("".join(st._parts).strip(), provider=t.provider, model=t.model,
+                                     latency=lat, attempts=attempts)
+                    return
+                finally:
+                    self._state.leave(t.provider)
             self._fail(errors, "")
 
         return Stream(gen, _on_done)

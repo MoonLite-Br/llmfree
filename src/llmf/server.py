@@ -11,6 +11,7 @@ from __future__ import annotations
 import hmac
 import json
 import sys
+import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
@@ -24,9 +25,17 @@ ALIASES = ("auto", "fast", "best", "code", "vision", "reasoning")
 
 class _Config:
     def __init__(self, client: Client, api_key: Optional[str], cors: bool,
-                 strict_models: bool, fallback: bool) -> None:
+                 strict_models: bool, fallback: bool, max_concurrent: int = 48) -> None:
         self.client, self.api_key, self.cors = client, api_key, cors
         self.strict_models, self.fallback = strict_models, fallback
+        # Load shedding: more than this many chats in flight -> 429 right away instead of a queue that
+        # makes every client time out. 0 disables the limit.
+        self.slots = threading.BoundedSemaphore(max_concurrent) if max_concurrent > 0 else None
+
+
+class _Server(ThreadingHTTPServer):
+    request_queue_size = 128     # the default (5) drops connections under a burst
+    daemon_threads = True
 
 
 def _err(message: str, etype: str, code: Optional[str] = None) -> Dict[str, Any]:
@@ -104,10 +113,22 @@ def make_handler(cfg: _Config):
                     raise ValueError("messages must be a non-empty list")
             except (ValueError, KeyError, TypeError) as e:
                 return self._json(400, _err("bad request: %s" % e, "invalid_request_error"))
+            if cfg.slots is not None and not cfg.slots.acquire(blocking=False):
+                data = json.dumps(_err("server is busy, retry shortly", "rate_limit_error", "busy")).encode()
+                self.send_response(429)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Retry-After", "1")
+                self.end_headers()
+                self.wfile.write(data)
+                return
             try:
                 self._chat(body, msgs)
             except (BrokenPipeError, ConnectionResetError):
                 pass
+            finally:
+                if cfg.slots is not None:
+                    cfg.slots.release()
 
         # --------------------------------------------------------------- chat
         def _model(self, requested: Any):
@@ -170,11 +191,10 @@ def make_handler(cfg: _Config):
 
 def make_server(client: Client, host: str = "127.0.0.1", port: int = 8000, *,
                 api_key: Optional[str] = None, cors: bool = False,
-                strict_models: bool = False, fallback: bool = True) -> ThreadingHTTPServer:
-    cfg = _Config(client, api_key, cors, strict_models, fallback)
-    srv = ThreadingHTTPServer((host, port), make_handler(cfg))
-    srv.daemon_threads = True
-    return srv
+                strict_models: bool = False, fallback: bool = True,
+                max_concurrent: int = 48) -> ThreadingHTTPServer:
+    cfg = _Config(client, api_key, cors, strict_models, fallback, max_concurrent)
+    return _Server((host, port), make_handler(cfg))
 
 
 def serve(client: Client, host: str = "127.0.0.1", port: int = 8000, **kw: Any) -> None:

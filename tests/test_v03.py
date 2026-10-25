@@ -425,6 +425,59 @@ class Transport(unittest.TestCase):
         self.assertIn("transport:", buf.getvalue())
 
 
+class LoadAware(unittest.TestCase):
+    def test_saturated_providers_go_to_the_back(self):
+        from llmf.client import _State, Target
+        st = _State()
+        a, b = Target("a", "x"), Target("b", "y")
+        for _ in range(2):
+            st.enter("a")
+        self.assertEqual(st.order([a, b], {}, False, {"a": 2, "b": 2}), [b, a])
+        st.leave("a")
+        self.assertEqual(st.order([a, b], {}, False, {"a": 2, "b": 2}), [a, b])
+        self.assertEqual(st.busy("a"), 1)
+        st.leave("a")
+        st.leave("a")                       # never negative
+        self.assertEqual(st.busy("a"), 0)
+
+    def test_concurrent_calls_spill_to_the_next_provider(self):
+        import threading
+        c = LLMF(builtin=False, retries=0, use_cache=False)
+        c.register("a", BASE + "/v1", "slow")
+        c.register("b", BASE + "/v1", "ok")
+        c._reg.providers["a"].concurrency = 1
+        out = {}
+
+        def run(key, delay):
+            time.sleep(delay)
+            out[key] = c.chat("hi", model=["a/slow", "b/ok"])
+
+        ts = [threading.Thread(target=run, args=("first", 0)), threading.Thread(target=run, args=("second", 0.4))]
+        for t in ts:
+            t.start()
+        for t in ts:
+            t.join()
+        self.assertEqual(out["first"].provider, "a")
+        self.assertEqual(out["second"].provider, "b")          # a was full, so it did not queue behind it
+        self.assertLess(out["second"].latency, 1.0)
+        self.assertEqual(c._state.busy("a"), 0)
+        self.assertEqual(c._state.busy("b"), 0)
+
+    def test_busy_is_released_after_stream_and_errors(self):
+        c = LLMF(builtin=False, retries=0, use_cache=False)
+        c.register("a", BASE + "/v1", ["ok", "err500"])
+        "".join(c.stream("hi", model="a/ok"))
+        self.assertEqual(c._state.busy("a"), 0)
+        with self.assertRaises(llmf.AllProvidersFailed):
+            c.chat("hi", model="a/err500", fallback=False)
+        self.assertEqual(c._state.busy("a"), 0)
+
+    def test_builtin_concurrency_hints(self):
+        reg = LLMF(use_cache=False)._reg.providers
+        self.assertEqual((reg["pollinations"].concurrency, reg["llm7"].concurrency), (1, 3))
+        self.assertEqual(LLMF(max_inflight=3, use_cache=False).max_inflight, 3)
+
+
 class Survival(unittest.TestCase):
     def test_history_window_and_rates(self):
         from llmf import _cache

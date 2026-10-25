@@ -53,6 +53,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--impersonate", help="curl_cffi browser profile (default: chrome)")
     p.add_argument("--host", default="127.0.0.1", help="serve: bind address (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=8000, help="serve: port (default 8000)")
+    p.add_argument("--max-concurrent", type=int, default=48,
+                   help="serve: chats in flight before answering 429 'busy' (0 = unlimited; default 48)")
     p.add_argument("--api-key", help="serve: require this bearer key")
     p.add_argument("--cors", action="store_true", help="serve: allow browser (CORS) access")
     p.add_argument("--strict-models", action="store_true", help="serve: 404 on unknown model names")
@@ -239,8 +241,19 @@ def main(argv: Optional[List[str]] = None) -> int:
                 c.configure(model=a.model if not a.provider else "%s/%s" % (a.provider, a.model))
             elif a.provider:
                 c.configure(model=a.provider)
-            serve(c, a.host, a.port, api_key=a.api_key, cors=a.cors,
-                  strict_models=a.strict_models, fallback=not a.no_fallback)
+            try:
+                serve(c, a.host, a.port, api_key=a.api_key, cors=a.cors,
+                      strict_models=a.strict_models, fallback=not a.no_fallback,
+                      max_concurrent=a.max_concurrent)
+            except OSError as e:          # includes socket.gaierror (bad host) and "address in use"
+                hint = ""
+                if str(a.host).isdigit():
+                    hint = "  (did you mean `--port %s`? --host expects an address such as 127.0.0.1 or 0.0.0.0)" % a.host
+                elif getattr(e, "errno", None) in (98, 48, 10048):
+                    hint = "  (the port is already in use: pick another with --port)"
+                print("error: cannot listen on %s:%s: %s%s" % (a.host, a.port, e.strerror or e, hint),
+                      file=sys.stderr)
+                return 2
         elif cmd == "health":
             bad = 0
             for h in c.health.check():

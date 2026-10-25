@@ -34,6 +34,7 @@ class ProviderSpec:
     models: List[ModelSpec] = field(default_factory=list)
     default_model: Optional[str] = None
     min_interval: float = 0.0  # minimum seconds between requests
+    concurrency: int = 0  # max simultaneous requests (0 = the client's ``max_inflight``)
     aliases: Tuple[str, ...] = ()
     free_suffix: str = ""  # when listing live models, keep only ids with this suffix
     auto: bool = True  # False: only used when named explicitly, never in the automatic chain

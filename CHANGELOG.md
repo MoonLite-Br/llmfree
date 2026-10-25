@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.6.1
+- Docs: static version badges on PyPI README (avoid shields.io stale pypi/v cache).
+
 ## 0.6.0
 - **Vetted catalogue**: a model stays only if it answered in >= 2 independent real-network runs with >= 75 % success.
   Removed: rewind-ai llama-3.1-8b / qwen-2.5-72b (sign-in only), kilo-openrouter nemotron-3-super-120b, minimax-m3.1-flash,

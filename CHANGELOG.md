@@ -1,11 +1,25 @@
 # Changelog
 
-## 0.5.2
-- Packaging: accurate full README (providers, API, CLI, pip metadata). Same runtime as 0.5.0/0.5.1.
-- Prefer this release on PyPI; 0.5.0/0.5.1 had incomplete README at upload time.
-
-## 0.5.1
-- Documentation: full PyPI/README (API, CLI, pip show, 0.5.0 providers). No code changes vs 0.5.0.
+## 0.6.0
+- **Vetted catalogue**: a model stays only if it answered in >= 2 independent real-network runs with >= 75 % success.
+  Removed: rewind-ai llama-3.1-8b / qwen-2.5-72b (sign-in only), kilo-openrouter nemotron-3-super-120b, minimax-m3.1-flash,
+  laguna-xs-2.1, nemotron-3-nano-omni (capacity), ovh Meta-Llama-3.3-70B and Qwen3.5-9B (slow / 429), llm7 minimax-m2.7
+  (503/429 half the time), blockrun laguna-xs-2.1 / muse-glimmer / north-mini-code, unverified chatai models.
+  Ids that are not catalogued still work (`provider/model`) and show up with `llmf models --live`.
+- **Survival history**: every `doctor` run is appended to `history.json` (last 20 results per model).
+  `llmf models` shows `alive 7/7` / `flaky 2/3` / `dead 0/3`; a model with >= 3 samples and < 50 % success sinks to the
+  end of every plan automatically. `ModelInfo.alive` / `.samples` expose the same.
+- Tags: `fast` = codestral, chatjimmy, gpt-oss:20b, pollinations, Mistral-Nemo, kilo-auto/small; `reasoning` ends with BlockRun nano-omni.
+- **Optional browser-like transport**: `LLMF(transport="auto" | "curl_cffi", impersonate="chrome")`,
+  `--transport`, `--impersonate`, `LLMF_TRANSPORT`, `LLMF_IMPERSONATE`. Uses `curl_cffi` (TLS/HTTP2 fingerprint of a
+  real Chrome) when installed: `pip install "llmf[stealth]"`. Still **zero required dependencies**; the stdlib
+  transport stays the default and is what `auto` falls back to when the package is missing or misbehaves.
+- `llmf -v version` prints the active transport; `live_test.py` has a `transport` group (skipped if not installed).
+- `vision` tag order: ovh Qwen2.5-VL -> kilo super-vl -> freeai qwen7b -> blockrun (last; often 429 capacity).
+- `ModelSpec.streams` / `ModelInfo.streaming`: `chatjimmy` is known to answer in one piece; `llmf models` shows `no-stream`.
+- `llmf models` has a dedicated `ALIVE` column (`alive 7/7`, `flaky 2/3`, `dead 0/3`, or `-` before the first doctor run).
+- "Retry after N seconds" now cools the provider down for N+1 s (was 3N+2).
+- `live_test.py`: provider checks that fail only with HTTP 429 are WARN (not FAIL); known non-streaming models pass.
 
 ## 0.5.0
 - New providers: `ch-at` (GPT-4o, no auth, no /models; first in the chain and in the `best` tag), `rewind-ai`

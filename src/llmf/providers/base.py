@@ -19,6 +19,7 @@ class ModelSpec:
     verified: bool = True
     aliases: Tuple[str, ...] = ()
     note: str = ""
+    streams: bool = True  # False: the endpoint answers in one piece even when asked to stream
     broken: bool = False  # known-dead: never picked automatically, still reachable as provider/model
 
 

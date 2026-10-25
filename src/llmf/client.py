@@ -77,6 +77,14 @@ class _State:
                 except (KeyError, TypeError, ValueError):
                     continue
 
+    def demote_unreliable(self, history: Dict[str, str]) -> None:
+        """Models whose recent doctor success rate is low sink to the end of every plan."""
+        with self._lock:
+            for key, h in history.items():
+                if _cache.unreliable(h) and "/" in key:
+                    prov, model = key.split("/", 1)
+                    self._demoted.add(Target(prov, model))
+
     def measured(self, max_latency: float) -> List[Target]:
         """Targets whose observed latency is <= ``max_latency`` (not demoted), fastest first."""
         with self._lock:
@@ -297,6 +305,8 @@ class Client:
             (faster, but uses more of the free quotas). ``1`` = off.
         only / exclude: restrict the providers that may be used.
         builtin: load the built-in provider catalogue.
+        transport: ``"urllib"`` (default), ``"auto"`` or ``"curl_cffi"`` (needs ``pip install curl_cffi``;
+            browser-like TLS fingerprint). Process-wide. ``impersonate`` picks the browser profile (default ``chrome``).
         proxy: optional ``http://``, ``https://`` or ``socks4/4a/5/5h://`` proxy URL (your own).
         use_cache: read/write the ``llmf doctor`` health cache (``LLMF_NO_CACHE=1`` disables).
         vision_timeout: seconds per request when images are attached (image models are slow).
@@ -307,10 +317,13 @@ class Client:
                  temperature: Optional[float] = None, only: Optional[Sequence[str]] = None,
                  exclude: Sequence[str] = (), builtin: bool = True,
                  user_agent: str = _http.DEFAULT_UA, proxy: Optional[str] = None,
+                 transport: Optional[str] = None, impersonate: Optional[str] = None,
                  routing: str = "ranked", race: int = 1, use_cache: bool = True,
                  cache_dir: Optional[str] = None, vision_timeout: float = 90.0) -> None:
         self.model = model
         self.proxy = _http.check_proxy(proxy)
+        if transport is not None or impersonate is not None:
+            _http.configure_transport(transport, impersonate)   # process-wide
         self.timeout = timeout
         self.deadline = deadline
         self.max_attempts = max_attempts
@@ -329,6 +342,7 @@ class Client:
         self._state = _State()
         if use_cache:
             self._state.seed(_cache.load(self._cache_path()))
+            self._state.demote_unreliable(_cache.load_history(self._cache_path()))
         # OpenAI-style namespaces; each is also directly callable (llm.chat("hi"), llm.models()).
         self.chat = _Chat(self)
         self.models = _Models(self)
@@ -346,6 +360,8 @@ class Client:
 
     def configure(self, **kw: Any) -> "Client":
         """Change settings in place, e.g. ``configure(timeout=30, exclude=["blockrun"])``."""
+        if "transport" in kw or "impersonate" in kw:
+            _http.configure_transport(kw.pop("transport", None), kw.pop("impersonate", None))
         for k, v in kw.items():
             if k.startswith("_") or not hasattr(self, k) or callable(getattr(self, k)):
                 raise TypeError("unknown setting %r" % k)
@@ -395,10 +411,13 @@ class Client:
 
     def _models_impl(self, live: bool = False, include_non_chat: bool = False) -> List[ModelInfo]:
         out = []
+        hist = _cache.load_history(self._cache_path()) if self.use_cache else {}
         for t in self._reg.catalog():
             m = self._reg.model_spec(*t)
+            h = hist.get("%s/%s" % (t.provider, t.model), "")
             out.append(ModelInfo(t.provider, t.model, tuple(self._reg.tags_of(t)),
-                                 bool(m and m.vision), bool(m and m.verified and not m.broken)))
+                                 bool(m and m.vision), bool(m and m.verified and not m.broken),
+                                 _cache.rate(h), len(h), bool(m.streams) if m else True))
         if live:
             known = {(i.provider, i.id) for i in out}
             for name, ids in self._live_ids(not include_non_chat).items():
@@ -503,6 +522,7 @@ class Client:
             merged = {(r["provider"], r["model"]): r for r in _cache.load(self._cache_path())}
             merged.update({(r["provider"], r["model"]): r for r in rows})
             _cache.save(self._cache_path(), list(merged.values()))
+            _cache.record(self._cache_path(), [r for r in rows if r.get("error") != "skipped"])
         return ordered
 
     # ------------------------------------------------------------------ planning

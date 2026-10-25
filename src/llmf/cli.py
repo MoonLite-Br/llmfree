@@ -48,6 +48,9 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--race", type=int, help="send each request to N providers at once")
     p.add_argument("--timeout", type=float)
     p.add_argument("--proxy", help="proxy URL: http://, https://, socks5://, socks5h://, socks4://")
+    p.add_argument("--transport", choices=("urllib", "auto", "curl_cffi"),
+                   help="HTTP engine: stdlib (default), auto (curl_cffi if installed) or curl_cffi (browser TLS fingerprint)")
+    p.add_argument("--impersonate", help="curl_cffi browser profile (default: chrome)")
     p.add_argument("--host", default="127.0.0.1", help="serve: bind address (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=8000, help="serve: port (default 8000)")
     p.add_argument("--api-key", help="serve: require this bearer key")
@@ -125,16 +128,27 @@ def _table(rows: List[List[str]], header: List[str]) -> None:
         print("  ".join(str(c).ljust(w) for c, w in zip(r, widths)).rstrip())
 
 
+def _alive(m) -> str:
+    """e.g. ``alive 7/7`` or ``flaky 1/3`` from the doctor history (empty if never checked)."""
+    if not m.samples or m.alive is None:
+        return ""
+    ok = int(round(m.alive * m.samples))
+    return "%s %d/%d" % ("alive" if m.alive >= 0.75 else "flaky" if m.alive >= 0.5 else "dead", ok, m.samples)
+
+
 def _cmd_models(a, c, args: List[str]) -> int:
     sub = args[0] if args else "list"
     if sub == "list":
         rows = c.models.list(live=a.live, include_non_chat=a.include_non_chat)
         if a.json:
             print(json.dumps([{"name": m.name, "tags": list(m.tags), "vision": m.vision,
-                               "verified": m.verified} for m in rows], indent=2))
+                               "verified": m.verified, "alive": m.alive,
+                               "samples": m.samples, "streaming": m.streaming} for m in rows], indent=2))
             return 0
         _table([[m.name, ",".join(list(m.tags) + (["vision"] if m.vision and "vision" not in m.tags else [])),
-                 "" if m.verified else "unverified"] for m in rows], ["MODEL", "TAGS", "STATUS"])
+                 _alive(m) or "-",
+                 " ".join(x for x in ("" if m.verified else "unverified", "" if m.streaming else "no-stream") if x)]
+                for m in rows], ["MODEL", "TAGS", "ALIVE", "STATUS"])
         return 0
     if sub == "check":
         return _cmd_doctor(a, c)
@@ -190,6 +204,8 @@ def main(argv: Optional[List[str]] = None) -> int:
             c.configure(timeout=a.timeout)
         if a.proxy:
             c.configure(proxy=a.proxy)
+        if a.transport or a.impersonate:
+            c.configure(transport=a.transport, impersonate=a.impersonate)
         if a.routing:
             c.configure(routing=a.routing)
     except ValueError as e:
@@ -200,6 +216,11 @@ def main(argv: Optional[List[str]] = None) -> int:
     try:
         if cmd == "version":
             print(__version__)
+            if a.verbose:
+                from . import _http as _h
+                t = _h.transport_info()
+                print("transport: %s (mode %s, curl_cffi %s, profile %s)" % (
+                    t["active"], t["mode"], t["curl_cffi"] or "not installed", t["impersonate"]))
         elif cmd == "providers":
             rows = c.providers.list()
             if a.json:

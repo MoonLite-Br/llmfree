@@ -345,6 +345,13 @@ def _provider_stream(name, model):
                 first = time.time() - t0
             pieces.append(p)
         need("".join(pieces).strip(), "empty stream")
+        spec = None
+        try:
+            spec = ctx.client()._reg.model_spec(name, model)
+        except Exception:  # noqa: BLE001
+            pass
+        if len(pieces) == 1 and spec is not None and not spec.streams:
+            return "1 chunk (known: this endpoint answers in one piece), %.2fs" % (first or 0)
         if len(pieces) == 1:
             raise Warn("works but delivered ONE chunk (no real streaming): %r" % one_line(pieces[0], 40))
         return "%d chunks, first after %.2fs" % (len(pieces), first or 0)
@@ -695,6 +702,31 @@ def _cache(ctx):
         return "saved %d results, reloaded latency for %s" % (len(res), ok.name)
 
 
+# ================================================================== transport
+@check("transport", "optional curl_cffi transport: chat + stream + vision-free fallback", kind="provider", slow=True)
+def _curl_transport(ctx):
+    from llmf import _curl, _http
+    ver = _curl.version()
+    if not ver or _curl.load() is None:
+        raise Skip("curl_cffi not installed (pip install 'llmf[stealth]')")
+    saved = dict(_http._transport)
+    try:
+        _http.configure_transport("curl_cffi")
+        c = ctx.client()
+        r = c.chat("Reply with exactly: pong", provider="ovh", model="gpt-oss-120b", fallback=False, max_tokens=300)
+        need(r.text, "empty")
+        need(_http.transport_info()["active"] == "curl_cffi", "curl_cffi was not used: %r" % (_http.transport_info(),))
+        st = c.stream("Count from 1 to 6, separated by commas.", provider="llm7", model="gpt-oss:20b",
+                      fallback=False, max_tokens=300)
+        n = sum(1 for chunk in st if chunk.text)
+        need(n >= 1, "no streamed text")
+        info = _http.transport_info()
+        return "curl_cffi %s, profile %s: %r, %d stream chunks" % (ver, info["impersonate"], one_line(r.text, 30), n)
+    finally:
+        _http._transport.clear()
+        _http._transport.update(saved)
+
+
 # ==================================================================== extras
 @check("extras", "chatai (quota ~3-5/IP/day)", kind="provider")
 def _chatai(ctx):
@@ -767,6 +799,17 @@ def main():
             except AssertionError as e:
                 status, detail = FAIL, str(e) or "assertion failed"
             except Exception as e:  # noqa: BLE001 - report any crash instead of dying
+                errs = getattr(e, "errors", None)
+                if kind == "provider" and errs and all(getattr(x, "status", None) == 429 for x in errs):
+                    status = WARN      # a free endpoint saying "slow down / no capacity" is not a defect in llmf
+                    detail = "rate-limited/capacity (HTTP 429), not a defect: %s" % one_line(errs[-1], 110)
+                    dt = time.time() - t0
+                    c = COLORS[status] if color else ""
+                    z = "\033[0m" if color else ""
+                    print("  %s%-4s%s %-62s %6.1fs  %s" % (c, status, z, name[:62], dt, one_line(detail, 100)), flush=True)
+                    results.append({"group": group, "name": name, "kind": kind, "status": status,
+                                    "seconds": round(dt, 2), "detail": one_line(detail, 300)})
+                    continue
                 status = FAIL
                 detail = "%s: %s" % (type(e).__name__, one_line(e, 150))
                 if os.environ.get("LLMF_LIVE_DEBUG"):

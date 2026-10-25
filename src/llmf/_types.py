@@ -89,6 +89,9 @@ class ModelInfo:
     tags: Tuple[str, ...] = ()
     vision: bool = False
     verified: bool = True
+    alive: Optional[float] = None   # success rate over the last doctor runs (None = never checked)
+    samples: int = 0                # how many doctor results that rate is based on
+    streaming: bool = True          # False: answers in one piece even when streaming is requested
 
     @property
     def name(self) -> str:

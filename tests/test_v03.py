@@ -10,6 +10,7 @@ os.environ["LLMF_NO_CACHE"] = "1"
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 sys.path.insert(0, os.path.dirname(__file__))
 
+import fake_curl_cffi  # noqa: E402
 import fakeserver  # noqa: E402
 import llmf  # noqa: E402
 from llmf import LLMF  # noqa: E402
@@ -65,7 +66,7 @@ class SDKSyntax(unittest.TestCase):
         llmf.default_client()  # create
         self.assertTrue(callable(llmf.chat))
         self.assertTrue(hasattr(llmf.chat, "completions"))
-        self.assertEqual(llmf.models.resolve("fast")[0], "llm7/minimax-m2.7")
+        self.assertEqual(llmf.models.resolve("fast")[0], "llm7/codestral-latest")
         self.assertEqual(llmf.LLMF, llmf.Client)
 
 
@@ -83,10 +84,10 @@ class Catalogue(unittest.TestCase):
     def test_fast_tag_follows_measurements(self):
         reg = llmf.Client(use_cache=False)._reg
         self.assertEqual([str(t.model) for t in reg.tag("fast")][:3],
-                         ["minimax-m2.7", "codestral-latest", "llama3.1-8B"])
+                         ["codestral-latest", "llama3.1-8B", "gpt-oss:20b"])
         self.assertEqual(reg.tag("best")[0].provider, "ch-at")
         self.assertEqual(reg.tag("best")[1].model, "nvidia/nemotron-3-ultra-550b-a55b:free")
-        self.assertNotIn("Meta-Llama-3_3-70B-Instruct", [t.model for t in reg.tag("fast")])
+        self.assertNotIn("minimax-m2.7", [t.model for t in reg.tag("fast")])   # 503/429 half the time: dropped
 
 
 class Doctor(unittest.TestCase):
@@ -221,8 +222,9 @@ class ErrorKinds(unittest.TestCase):
     def test_retry_after_is_honoured(self):
         r, scope, cd = self.kind(429, "Rate limit exceeded. Retry after 1 seconds.")
         self.assertEqual(scope, "provider")
-        self.assertLess(cd, 15)
-        self.assertGreaterEqual(cd, 5)
+        self.assertEqual(cd, 5.0)                      # floor
+        self.assertEqual(self.kind(429, "Rate limit exceeded. Retry after 31 seconds.")[2], 32.0)
+        self.assertEqual(self.kind(429, "Retry after 9999 seconds")[2], 300.0)   # capped
 
     def test_capacity_on_one_model_does_not_sideline_the_provider(self):
         c = LLMF(builtin=False, retries=0, use_cache=False)
@@ -297,25 +299,174 @@ class DynamicFast(unittest.TestCase):
     def test_fast_follows_measurements(self):
         c = LLMF(use_cache=False)
         T = llmf.client.Target
-        c._state.ok(T("ovh", "Qwen3.5-9B"), 0.25)             # not in the static tag, but measured quick
-        c._state.ok(T("llm7", "minimax-m2.7"), 0.9)
+        c._state.ok(T("ovh", "Qwen3.5-397B-A17B"), 0.25)             # not in the static tag, but measured quick
+        c._state.ok(T("llm7", "codestral-latest"), 0.9)
         c._state.ok(T("chatjimmy", "llama3.1-8B"), 0.1)
         plan = c._plan("fast", None, False)
-        self.assertEqual([t.model for t in plan[:3]], ["llama3.1-8B", "Qwen3.5-9B", "minimax-m2.7"])
+        self.assertEqual([t.model for t in plan[:3]], ["llama3.1-8B", "Qwen3.5-397B-A17B", "codestral-latest"])
 
     def test_slow_measurement_is_not_added_and_failures_sink(self):
         c = LLMF(use_cache=False)
         T = llmf.client.Target
-        c._state.ok(T("ovh", "Qwen3.5-9B"), 9.0)               # slow -> must not join "fast"
-        c._state.seed([{"provider": "llm7", "model": "minimax-m2.7", "ok": False, "latency": 0}])
+        c._state.ok(T("ovh", "Qwen3.5-397B-A17B"), 9.0)               # slow -> must not join "fast"
+        c._state.seed([{"provider": "llm7", "model": "codestral-latest", "ok": False, "latency": 0}])
         plan = c._plan("fast", None, False)
-        self.assertNotIn(T("ovh", "Qwen3.5-9B"), plan)
-        self.assertEqual(plan[-1], T("llm7", "minimax-m2.7"))  # demoted: tried last
+        self.assertNotIn(T("ovh", "Qwen3.5-397B-A17B"), plan)
+        self.assertEqual(plan[-1], T("llm7", "codestral-latest"))  # demoted: tried last
 
     def test_other_tags_stay_static(self):
         c = LLMF(use_cache=False)
-        c._state.ok(llmf.client.Target("ovh", "Qwen3.5-9B"), 0.1)
+        c._state.ok(llmf.client.Target("ovh", "Qwen3.5-397B-A17B"), 0.1)
         self.assertEqual(c._plan("best", None, False)[0].model, "gpt-4o")
+
+
+class StreamingFlagAndVisionOrder(unittest.TestCase):
+    def test_chatjimmy_is_flagged_and_vision_prefers_non_blockrun(self):
+        c = LLMF(use_cache=False)
+        rows = {m.name: m for m in c.models.list()}
+        self.assertFalse(rows["chatjimmy/llama3.1-8B"].streaming)
+        self.assertTrue(rows["ovh/gpt-oss-120b"].streaming)
+        self.assertEqual([t.split("/")[0] for t in c.models.resolve("vision")],
+                         ["ovh", "kilo-openrouter", "freeai", "blockrun"])
+
+    def test_cli_models_has_alive_and_status_columns(self):
+        from llmf import cli
+        import io
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["models"])
+        head = buf.getvalue().splitlines()[0].split()
+        self.assertEqual(head, ["MODEL", "TAGS", "ALIVE", "STATUS"])
+        self.assertIn("no-stream", buf.getvalue())
+
+
+class Transport(unittest.TestCase):
+    def setUp(self):
+        from llmf import _http
+        self._http = _http
+        self._saved = dict(_http._transport)
+
+    def tearDown(self):
+        fake_curl_cffi.uninstall()
+        self._http._transport.clear()
+        self._http._transport.update(self._saved)
+
+    def client(self, **kw):
+        c = LLMF(builtin=False, retries=0, use_cache=False, **kw)
+        c.register("p", BASE + "/v1", "ok")
+        return c
+
+    def test_default_is_stdlib_and_never_imports_curl(self):
+        fake_curl_cffi.install()
+        fake_curl_cffi.CALLS.clear()
+        self.client().chat("hi")
+        self.assertEqual(fake_curl_cffi.CALLS, [])
+        self.assertEqual(self._http.transport_info()["active"], "urllib")
+
+    def test_curl_transport_chat_stream_and_headers(self):
+        fake_curl_cffi.install()
+        c = self.client(transport="curl_cffi", impersonate="chrome131")
+        r = c.chat("hi")
+        self.assertEqual(r.provider, "p")
+        method, url, kw = fake_curl_cffi.CALLS[-1]
+        self.assertEqual((method, kw["impersonate"], kw["stream"]), ("POST", "chrome131", True))
+        self.assertNotIn("User-Agent", kw["headers"])           # the browser profile supplies its own
+        self.assertEqual("".join(c.stream("hi")), "".join(c.stream("hi")))
+        self.assertGreater(len("".join(c.stream("hi"))), 0)
+        info = self._http.transport_info()
+        self.assertEqual((info["active"], info["curl_cffi"]), ("curl_cffi", "0.0-test"))
+
+    def test_proxy_is_forwarded_and_http_errors_map(self):
+        fake_curl_cffi.install()
+        c = self.client(transport="curl_cffi")
+        c.register("bad", BASE + "/v1", "err500", front=True)
+        r = c.chat("hi", model=["bad/err500", "p/ok"])
+        self.assertEqual((r.provider, r.attempts[0].ok), ("p", False))
+        c.chat("hi", proxy="socks5h://127.0.0.1:9", model="p/ok", fallback=False)   # stub ignores proxies
+        self.assertEqual(fake_curl_cffi.CALLS[-1][2]["proxies"],
+                         {"http": "socks5h://127.0.0.1:9", "https": "socks5h://127.0.0.1:9"})
+
+    def test_timeout_and_network_errors_are_classified(self):
+        for kind, expect in (("timeout", None), ("network", None)):
+            fake_curl_cffi.install(raise_kind=kind)
+            c = self.client(transport="curl_cffi")
+            with self.assertRaises(llmf.AllProvidersFailed) as cm:
+                c.chat("hi", fallback=False, model="p/ok")
+            self.assertIn(kind if kind == "timeout" else "network", str(cm.exception).lower())
+
+    def test_auto_falls_back_when_not_installed_or_broken(self):
+        fake_curl_cffi.uninstall()
+        c = self.client(transport="auto")
+        self.assertEqual(c.chat("hi").provider, "p")
+        self.assertEqual(self._http.transport_info()["active"], "urllib")
+        fake_curl_cffi.install(unusable=True)
+        self._http.configure_transport("auto")
+        self.assertEqual(c.chat("hi").provider, "p")             # fell back to urllib
+        self.assertTrue(self._http._transport["broken"])
+        self.assertEqual(self._http.transport_info()["active"], "urllib")
+
+    def test_strict_mode_fails_cleanly_without_the_package(self):
+        fake_curl_cffi.uninstall()
+        c = self.client(transport="curl_cffi")
+        with self.assertRaises(llmf.AllProvidersFailed) as cm:
+            c.chat("hi", fallback=False, model="p/ok")
+        self.assertIn("not installed", str(cm.exception))
+        with self.assertRaises(ValueError):
+            self._http.configure_transport("selenium")
+
+    def test_cli_version_verbose_and_flag(self):
+        from llmf import cli
+        import io
+        import contextlib
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            cli.main(["--transport", "auto", "-v", "version"])
+        self.assertIn("transport:", buf.getvalue())
+
+
+class Survival(unittest.TestCase):
+    def test_history_window_and_rates(self):
+        from llmf import _cache
+        d = tempfile.mkdtemp()
+        for ok in (True, True, False):
+            _cache.record(d, [{"provider": "p", "model": "m", "ok": ok}])
+        h = _cache.load_history(d)
+        self.assertEqual(h["p/m"], "110")
+        self.assertAlmostEqual(_cache.rate(h["p/m"]), 2 / 3)
+        self.assertFalse(_cache.unreliable("11"))            # too few samples
+        self.assertFalse(_cache.unreliable("110"))
+        self.assertTrue(_cache.unreliable("100"))
+        for _ in range(30):
+            _cache.record(d, [{"provider": "p", "model": "m", "ok": True}])
+        self.assertEqual(len(_cache.load_history(d)["p/m"]), _cache.HISTORY_WINDOW)
+
+    def test_unreliable_models_sink_and_cli_shows_rates(self):
+        from llmf import _cache
+        d = tempfile.mkdtemp()
+        for _ in range(3):
+            _cache.record(d, [{"provider": "llm7", "model": "codestral-latest", "ok": False},
+                              {"provider": "chatjimmy", "model": "llama3.1-8B", "ok": True}])
+        c = LLMF(cache_dir=d)
+        plan = c._plan("fast", None, False)
+        self.assertEqual(plan[-1], llmf.client.Target("llm7", "codestral-latest"))
+        rows = {m.name: m for m in c.models.list()}
+        self.assertEqual((rows["llm7/codestral-latest"].alive, rows["llm7/codestral-latest"].samples), (0.0, 3))
+        self.assertEqual(rows["chatjimmy/llama3.1-8B"].alive, 1.0)
+        self.assertIsNone(rows["ovh/gpt-oss-120b"].alive)
+        from llmf.cli import _alive
+        self.assertEqual(_alive(rows["llm7/codestral-latest"]), "dead 0/3")
+        self.assertEqual(_alive(rows["chatjimmy/llama3.1-8B"]), "alive 3/3")
+        self.assertEqual(_alive(rows["ovh/gpt-oss-120b"]), "")
+
+    def test_catalogue_only_holds_vetted_models(self):
+        ids = {"%s/%s" % (t.provider, t.model) for t in LLMF(use_cache=False)._reg.catalog()}
+        for gone in ("kilo-openrouter/minimax/minimax-m3.1-flash:free", "llm7/minimax-m2.7",
+                     "kilo-openrouter/poolside/laguna-xs-2.1:free", "rewind-ai/qwen/qwen-2.5-72b-instruct",
+                     "ovh/Meta-Llama-3_3-70B-Instruct", "chatai/x-ai/grok-4"):
+            self.assertNotIn(gone, ids)
+        m = LLMF(use_cache=False)._reg
+        self.assertTrue(all(m.model_spec(t.provider, t.model).verified for t in m.catalog()))
 
 
 class NewProviders(unittest.TestCase):

@@ -1,4 +1,9 @@
-"""The built-in catalogue of free, keyless endpoints (verified 2026-10-22).
+"""The built-in catalogue of free, keyless endpoints.
+
+Policy: a model is listed only if it answered in at least 2 independent real-network runs
+(2026-10-24/25) with a success rate >= 75%; sign-in-only, 404, or flaky (429/503 half the time)
+models are left out. Unknown ids still work (``provider/model`` passes through) and
+``llmf doctor --all`` shows what else is live.
 
 Order of ``BUILTIN`` is the global fallback chain: fastest/cleanest first.
 Endpoints can disappear at any time – that is exactly why llmf falls back.
@@ -34,8 +39,6 @@ BUILTIN: List[ProviderSpec] = [
         models=[
             M("qwen/qwen-2.5-7b-instruct", aliases=("qwen-2.5-7b",)),
             M("gpt-4o-mini", aliases=("4o-mini",)),
-            M("meta-llama/llama-3.1-8b-instruct", verified=False, broken=True, note="needs sign-in"),
-            M("qwen/qwen-2.5-72b-instruct", verified=False, broken=True, note="needs sign-in"),
         ],
         note="Anonymous JWT is issued by the server (30 days); 50/50 requests in 15 s passed.",
     ),
@@ -50,9 +53,6 @@ BUILTIN: List[ProviderSpec] = [
             M("gpt-oss-120b"),
             M("Mistral-Nemo-Instruct-2407"),
             M("Qwen3.5-397B-A17B"),
-            M("Meta-Llama-3_3-70B-Instruct", aliases=("llama3.3", "llama-3.3-70b"),
-              note="often 7-30 s or 429 on the anonymous tier"),
-            M("Qwen3.5-9B"),
             M("Qwen2.5-VL-72B-Instruct", vision=True),
         ],
         note="Fast and clean. Anonymous tier of OVHcloud AI Endpoints.",
@@ -68,18 +68,12 @@ BUILTIN: List[ProviderSpec] = [
         default_model="nvidia/nemotron-3-ultra-550b-a55b:free",
         models=[
             M("nvidia/nemotron-3-ultra-550b-a55b:free"),
-            M("nvidia/nemotron-3-super-120b-a12b:free", verified=False, broken=True,
-              note="404 provider error (user test 2026-10-24)"),
-            M("minimax/minimax-m3.1-flash:free", verified=False, broken=True,
-              note="404 model not found (user test 2026-10-24)"),
             M("nvidia/nemotron-3.5-lightning:free"),
             M("cohere/north-mini-code:free"),
-            M("nvidia/nemotron-3.5-super-vl:free", vision=True, verified=False),
-            M("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"),
+            M("nvidia/nemotron-3.5-super-vl:free", vision=True),
             M("dots-studio/dots-3-note-preview:free"),
             M("liquid/lfm-2.5-2.6b:free"),
-            M("poolside/laguna-s-2.1:free", verified=False),
-            M("poolside/laguna-xs-2.1:free", verified=False),
+            M("poolside/laguna-s-2.1:free"),
         ],
         note="Strongest free model. ~200 requests/hour/IP.",
     ),
@@ -106,7 +100,8 @@ BUILTIN: List[ProviderSpec] = [
         kind="chatjimmy",
         aliases=("jimmy",),
         default_model="llama3.1-8B",
-        models=[M("llama3.1-8B", aliases=("llama3.1", "llama-3.1-8b"))],
+        models=[M("llama3.1-8B", aliases=("llama3.1", "llama-3.1-8b"), streams=False,
+                  note="replies in one piece (no real streaming); extremely fast anyway")],
         note="Extremely fast Llama 3.1 8B; custom response format.",
     ),
     ProviderSpec(
@@ -146,7 +141,6 @@ BUILTIN: List[ProviderSpec] = [
         min_interval=1.1,                      # 429 "Retry after 1 seconds" on back-to-back calls
         models=[
             M("gpt-oss:20b", aliases=("gpt-oss",)),
-            M("minimax-m2.7", note="~0.2 s measured"),
             M("codestral-latest", note="code model, fast"),
         ],
         note="Stable and quick. Some larger/other models answer 429 (capacity).",
@@ -159,13 +153,9 @@ BUILTIN: List[ProviderSpec] = [
         default_model="nvidia/nemotron-3.5-lightning",
         models=[
             M("nvidia/nemotron-3.5-lightning"),
-            M("poolside/laguna-xs-2.1", verified=False),
-            M("nvidia/muse-glimmer-30b", verified=False),
             M("nvidia/nemotron-3-ultra-550b", note="best quality but often 429 capacity / 10-50 s"),
             M("nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"),
             M("nvidia/llama-3.2-11b-vision", vision=True),
-            M("cohere/north-mini-code", verified=False,
-              note="answered once, later 429 capacity (shared NVIDIA pool); cooled down, not broken"),
         ],
         note="Upstream times out after ~12 s, so it can be flaky.",
     ),
@@ -192,9 +182,6 @@ BUILTIN: List[ProviderSpec] = [
             M("openai/gpt-5.6-luna"),
             M("anthropic/claude-haiku-5.5"),
             M("google/gemini-2.5-flash-lite"),
-            M("x-ai/grok-4", verified=False),
-            M("anthropic/claude-opus-5", verified=False),
-            M("google/gemini-3.1-pro", verified=False),
         ],
         checkable=False,
         note="Premium models but only ~3-5 requests/IP/day; last-resort in the chain.",
@@ -205,7 +192,6 @@ BUILTIN: List[ProviderSpec] = [
 TAGS: Dict[str, List[Tuple[str, str]]] = {
     # ordered by latencies measured on real networks (2026-10-24); "fast" is re-sorted live by llmf
     "fast": [
-        ("llm7", "minimax-m2.7"),
         ("llm7", "codestral-latest"),
         ("chatjimmy", "llama3.1-8B"),
         ("llm7", "gpt-oss:20b"),
@@ -219,7 +205,6 @@ TAGS: Dict[str, List[Tuple[str, str]]] = {
         ("blockrun", "nvidia/nemotron-3-ultra-550b"),
         ("ovh", "gpt-oss-120b"),
         ("ovh", "Qwen3.5-397B-A17B"),
-        ("ovh", "Meta-Llama-3_3-70B-Instruct"),
     ],
     "code": [
         ("kilo-openrouter", "cohere/north-mini-code:free"),
@@ -231,14 +216,14 @@ TAGS: Dict[str, List[Tuple[str, str]]] = {
     ],
     "vision": [
         ("ovh", "Qwen2.5-VL-72B-Instruct"),
-        ("freeai", "qwen7b"),
         ("kilo-openrouter", "nvidia/nemotron-3.5-super-vl:free"),
-        ("blockrun", "nvidia/llama-3.2-11b-vision"),
+        ("freeai", "qwen7b"),
+        ("blockrun", "nvidia/llama-3.2-11b-vision"),     # last: often 429 capacity
     ],
     "reasoning": [
         ("ovh", "gpt-oss-120b"),
-        ("kilo-openrouter", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning:free"),
         ("freeai", "deepseek-r1"),
         ("llm7", "gpt-oss:20b"),
+        ("blockrun", "nvidia/nemotron-3-nano-omni-30b-a3b-reasoning"),
     ],
 }

@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import gzip
 import http.client
+import logging
+import os
 import socket
 import ssl
 import urllib.error
@@ -16,6 +18,36 @@ DEFAULT_UA = (
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) "
     "Chrome/130.0.0.0 Safari/537.36 llmf/%s" % __version__
 )
+
+log = logging.getLogger("llmf")
+
+TRANSPORTS = ("urllib", "curl_cffi", "auto")
+_transport = {"mode": os.environ.get("LLMF_TRANSPORT") or "urllib",
+              "impersonate": os.environ.get("LLMF_IMPERSONATE") or "chrome",
+              "broken": False}
+
+
+def configure_transport(mode: Optional[str] = None, impersonate: Optional[str] = None) -> None:
+    """Process-wide transport: ``"urllib"`` (default, stdlib), ``"curl_cffi"`` (browser TLS fingerprint,
+    strict) or ``"auto"`` (curl_cffi when installed and working, else stdlib)."""
+    if mode is not None:
+        if mode not in TRANSPORTS:
+            raise ValueError("transport must be one of %s" % ", ".join(TRANSPORTS))
+        _transport["mode"] = mode
+        _transport["broken"] = False
+    if impersonate is not None:
+        _transport["impersonate"] = impersonate
+
+
+def transport_info() -> Dict[str, object]:
+    from . import _curl
+
+    ver = _curl.version()
+    mode = str(_transport["mode"])
+    active = "curl_cffi" if mode != "urllib" and ver and not _transport["broken"] else "urllib"
+    return {"mode": mode, "active": active, "impersonate": _transport["impersonate"],
+            "curl_cffi": ver}
+
 
 NETWORK_ERRORS = (OSError, http.client.HTTPException, ssl.SSLError, socket.timeout)
 
@@ -99,6 +131,18 @@ def open_url(
     opener: Optional[urllib.request.OpenerDirector] = None,
 ):
     """Open ``url`` and return the response object (caller must close it)."""
+    mode = _transport["mode"]
+    if opener is None and mode != "urllib" and not _transport["broken"]:
+        from . import _curl
+
+        try:
+            return _curl.open_url(url, headers=headers, data=data, timeout=timeout, proxy=proxy,
+                                  impersonate=str(_transport["impersonate"]), http_failure=HTTPFailure)
+        except _curl.Unusable as e:
+            if mode == "curl_cffi":
+                raise HTTPFailure(None, "curl_cffi transport unusable: %s" % e, "network") from None
+            _transport["broken"] = True      # "auto": remember and use the stdlib from now on
+            log.warning("curl_cffi unusable (%s); falling back to urllib", e)
     req = urllib.request.Request(url, data=data, headers=headers)
     try:
         if opener is None:

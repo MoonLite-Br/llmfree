@@ -82,7 +82,7 @@ def _classify(status, code, message=""):
         return False, "model", 6 * 3600.0
     wait = _retry_after(text)
     if wait is not None and (status == 429 or (code or "") in _RATE_CODES):
-        return False, "provider", max(5.0, min(wait * 3 + 2, 120.0))
+        return False, "provider", max(5.0, min(wait + 1.0, 300.0))   # the server told us how long
     if status == 429 or (code or "") in _RATE_CODES:
         return False, "provider", 60.0
     if status is None:

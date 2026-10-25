@@ -50,3 +50,51 @@ def save(directory: Optional[str], results: List[Dict[str, Any]]) -> Optional[st
         return path
     except OSError:
         return None
+
+
+# ---------------------------------------------------------------- survival history
+HISTORY_WINDOW = 20      # keep the last N doctor results per model
+MIN_SAMPLES = 3          # a model needs this many samples before its rate demotes it
+MIN_RATE = 0.5           # ... and a success rate below this demotes it
+
+
+def load_history(directory: Optional[str]) -> Dict[str, str]:
+    """``{"provider/model": "1101..."}`` (newest last; ``1`` = answered, ``0`` = failed)."""
+    if not directory:
+        return {}
+    try:
+        with open(os.path.join(directory, "history.json"), encoding="utf-8") as f:
+            data = json.load(f)
+        return {str(k): str(v) for k, v in data.items() if isinstance(v, str) and set(v) <= {"0", "1"}}
+    except (OSError, ValueError, TypeError, AttributeError):
+        return {}
+
+
+def record(directory: Optional[str], rows: List[Dict[str, Any]]) -> None:
+    """Append one doctor result per model to the survival history."""
+    if not directory or not rows:
+        return
+    hist = load_history(directory)
+    for r in rows:
+        try:
+            key = "%s/%s" % (r["provider"], r["model"])
+        except KeyError:
+            continue
+        hist[key] = (hist.get(key, "") + ("1" if r.get("ok") else "0"))[-HISTORY_WINDOW:]
+    try:
+        os.makedirs(directory, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=directory, suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(hist, f, ensure_ascii=False, sort_keys=True)
+        os.replace(tmp, os.path.join(directory, "history.json"))
+    except OSError:
+        pass
+
+
+def rate(history: str) -> Optional[float]:
+    return history.count("1") / len(history) if history else None
+
+
+def unreliable(history: str) -> bool:
+    """Enough samples and a low success rate."""
+    return len(history) >= MIN_SAMPLES and history.count("1") / len(history) < MIN_RATE

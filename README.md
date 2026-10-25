@@ -2,8 +2,9 @@
 
 **Free, keyless LLM access in one call — with automatic multi-provider fallback.**
 
-[![PyPI version](https://img.shields.io/pypi/v/llmf.svg)](https://pypi.org/project/llmf/)
-[![Python versions](https://img.shields.io/pypi/pyversions/llmf.svg)](https://pypi.org/project/llmf/)
+[![PyPI version](https://img.shields.io/pypi/v/llmf.svg?cacheSeconds=300)](https://pypi.org/project/llmf/)
+[![llmf 0.6.0](https://img.shields.io/badge/llmf-0.6.0-blue)](https://pypi.org/project/llmf/0.6.0/)
+[![Python versions](https://img.shields.io/pypi/pyversions/llmf.svg?cacheSeconds=300)](https://pypi.org/project/llmf/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 **llmf** (*llmfree*) is a **stdlib-only** Python library and CLI for public, no-API-key OpenAI-compatible endpoints. It picks a live target, falls back on failure, and runs on desktop and **Termux**.

@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.5.2
+- Packaging: accurate full README (providers, API, CLI, pip metadata). Same runtime as 0.5.0/0.5.1.
+- Prefer this release on PyPI; 0.5.0/0.5.1 had incomplete README at upload time.
+
 ## 0.5.1
 - Documentation: full PyPI/README (API, CLI, pip show, 0.5.0 providers). No code changes vs 0.5.0.
 

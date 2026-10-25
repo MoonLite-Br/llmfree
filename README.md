@@ -5,46 +5,17 @@
 [![PyPI version](https://img.shields.io/pypi/v/llmf.svg)](https://pypi.org/project/llmf/)
 [![Python versions](https://img.shields.io/pypi/pyversions/llmf.svg)](https://pypi.org/project/llmf/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![PyPI downloads](https://img.shields.io/pypi/dm/llmf.svg)](https://pypi.org/project/llmf/)
 
-**llmf** (*llmfree*) is a **stdlib-only** Python library and CLI for public, no-API-key OpenAI-compatible endpoints. It picks a live target, falls back on errors, and runs on desktop and **Termux**.
+**llmf** (*llmfree*) is a **stdlib-only** Python library and CLI for public, no-API-key OpenAI-compatible endpoints. It selects a live target, falls back on failure, and runs on desktop and **Termux**.
 
 ```python
 import llmf
 
 r = llmf.chat("Explain the CAP theorem in two sentences.")
-print(r)              # Reply is a str subclass
-print(r.source)       # "provider/model"
+print(r)                 # Reply is a str subclass
+print(r.source)          # e.g. "ch-at/gpt-4o"
 print(r.provider, r.model, round(r.latency, 3), r.usage)
-```
-
----
-
-## Package metadata (`pip show llmf`)
-
-```text
-Name: llmf
-Version: 0.5.1
-Summary: llmf (llmfree): free, keyless LLM chat with automatic multi-provider fallback — stdlib only.
-Home-page: https://github.com/MoonLite-Br/llmfree
-Author: Html
-Author-email: moonlite-br@users.noreply.github.com
-License: MIT
-Requires-Python: >=3.8
-Requires:
-```
-
-| Field | Value |
-|--------|--------|
-| **Name** | `llmf` |
-| **Version** | `0.5.1` |
-| **Dependencies** | none |
-| **License** | MIT |
-| **Repository** | https://github.com/MoonLite-Br/llmfree |
-| **PyPI** | https://pypi.org/project/llmf/ |
-
-```bash
-pip install -U llmf
-pip show llmf
 ```
 
 ---
@@ -57,6 +28,28 @@ python -c "import llmf; print(llmf.__version__)"
 llmf version
 ```
 
+### `pip show llmf` (example fields)
+
+```text
+Name: llmf
+Version: <installed version>
+Summary: llmf (llmfree): free, keyless LLM chat with automatic multi-provider fallback — stdlib only.
+Home-page: https://github.com/MoonLite-Br/llmfree
+Author: Html
+License: MIT
+Requires-Python: >=3.8
+Requires: (none)
+```
+
+| Field | Value |
+|--------|--------|
+| **Name** | `llmf` |
+| **Requires-Python** | `>=3.8` |
+| **Dependencies** | none |
+| **License** | MIT |
+| **Repository** | https://github.com/MoonLite-Br/llmfree |
+| **PyPI** | https://pypi.org/project/llmf/ |
+
 ---
 
 ## Python API
@@ -68,29 +61,31 @@ import llmf
 
 r = llmf.chat("Hello!")
 assert isinstance(r, str)
-r.text                 # same as str(r)
-r.source               # "provider/model"
-r.provider, r.model
-r.latency              # seconds
-r.usage                # dict or None
+r.text            # == str(r)
+r.source          # "provider/model"
+r.provider
+r.model
+r.latency         # seconds
+r.usage           # dict or None
 r.finish_reason
-r.reasoning            # optional
-r.attempts             # list of Attempt(provider, model, ok, latency, error)
+r.reasoning       # optional
+r.attempts        # [Attempt(provider, model, ok, latency, error), ...]
 ```
 
-**`model=` aliases:** `fast` | `best` | `code` | `vision` | `reasoning`  
-Also fuzzy names, full `provider/id`, a list tried in order, or `provider="…"`.
+**`model=`:** aliases `fast` | `best` | `code` | `vision` | `reasoning`, fuzzy names, full `provider/id`, or a list tried in order.
 
 ```python
-llmf.chat("hi", model="code", max_tokens=256, temperature=0.3)
+llmf.chat("hi", model="best")
 llmf.chat("hi", model=["best", "fast"])
-llmf.chat("Describe this", images=["photo.jpg"], model="vision")  # vision_timeout default 90s
-llmf.chat("…", provider="ch-at")       # force provider (works for opt-in too)
-llmf.chat("…", provider="nottrack")    # opt-in provider (not in auto chain)
+llmf.chat("hi", provider="ch-at")
+llmf.chat("hi", provider="nottrack")   # opt-in provider (not in auto chain)
+llmf.chat("Describe this", images=["photo.jpg"], model="vision")
 
 for piece in llmf.stream("Count 1 to 5"):
     print(piece, end="", flush=True)
 ```
+
+Also: `llmf.achat`, `llmf.astream`, `llmf.session(system=...)`.
 
 ### OpenAI-shaped form
 
@@ -104,35 +99,50 @@ c = llm.chat.completions.create(
 )
 print(c.choices[0].message.content)
 print(c.model, c.provider, c.usage, c.latency, c.attempts)
-
-for chunk in llm.chat.completions.create(
-    model="fast",
-    messages=[{"role": "user", "content": "Count to 3"}],
-    stream=True,
-):
-    delta = chunk.choices[0].delta.content
-    if delta:
-        print(delta, end="")
 ```
 
-### Catalog, doctor, config
+Streaming: `stream=True` yields chunks with `choices[0].delta.content`.
+
+### Catalog & configuration
 
 ```python
 llmf.models.list()
-llmf.models.list(live=True)                              # chat/free only by default
+llmf.models.list(live=True)                       # chat/free only by default
 llmf.models.list(live=True, include_non_chat=True)
 llmf.models.resolve("best")
-llmf.models.check()                                      # real call per model; ~24h cache
+llmf.models.check()                               # live one-shot probe; ~24h cache
+
 llmf.providers.list()
 llmf.health.check()
 
 llmf.configure(timeout=30, vision_timeout=90, routing="adaptive", race=2)
 llmf.register("lab", "http://localhost:11434/v1", ["llama3"], front=True)
-llmf.discover()                                          # opt-in external catalog
+llmf.discover()                                   # opt-in external keyless catalog
 ```
 
-Env: `LLMF_TIMEOUT`, `LLMF_PROXY`, `LLMF_MODEL`, `LLMF_ROUTING`.  
-Proxy: `http://`, `https://`, `socks5://`, `socks5h://`, `socks4://` (stdlib).
+**Environment:** `LLMF_TIMEOUT`, `LLMF_PROXY`, `LLMF_MODEL`, `LLMF_ROUTING`  
+**Proxy:** `http://`, `https://`, `socks5://`, `socks5h://`, `socks4://` (stdlib)
+
+---
+
+## Built-in providers (0.5.x)
+
+| Provider | In auto chain | Notes |
+|----------|---------------|--------|
+| `ch-at` | yes | Early in chain / `best` (e.g. `gpt-4o`) |
+| `rewind-ai` | yes | Qwen / gpt-4o-mini; some sign-in models marked broken |
+| `ovh` | yes | Default `gpt-oss-120b` |
+| `kilo-openrouter` | yes | Free OpenRouter-style ids |
+| `freeai` | yes | `qwen7b`, `qwen-coder`, `deepseek-r1` |
+| `chatjimmy` | yes | Fast small model |
+| `kilo-gateway` | yes | Gateway free routes |
+| `pollinations` | yes | `openai` (alias `openai-fast`) |
+| `llm7` | yes | `gpt-oss:20b`, `minimax-m2.7`, … |
+| `blockrun` | yes | Default `nemotron-3.5-lightning` |
+| `chatai` | yes | Higher-tier models; strict daily quota |
+| `nottrack` | **no** (`auto=False`) | Opt-in only: `provider="nottrack"` |
+
+Exact model lists change; use `llmf models` / `llmf providers`.
 
 ---
 
@@ -152,49 +162,37 @@ usage: llmf [options] "question"              ask once (also reads stdin)
 |---------|-------------|
 | `llmf "…"` / `llmf ask "…"` | One-shot ask |
 | `llmf chat` | Interactive REPL |
-| `llmf models` / `models list` | Catalog table |
-| `llmf models list --live` | + live `/models` (chat/free by default) |
-| `llmf models list --live --include-non-chat` | Include non-chat ids |
+| `llmf models` / `models list` | Catalog |
+| `llmf models list --live` | Merge live `/models` (chat/free default) |
 | `llmf models resolve best` | Expand alias |
-| `llmf models check` / `llmf doctor` | Probe models once |
-| `llmf doctor --all` | Also live-discovered ids |
-| `llmf doctor --include-limited` | Strict daily-quota providers |
+| `llmf models check` / `doctor` | Probe each model once |
+| `llmf doctor --all` | Include live-discovered ids |
+| `llmf doctor --include-limited` | Quota-limited providers |
 | `llmf doctor --include-non-chat` | Non-chat model ids |
-| `llmf doctor --no-save` | Skip health cache write |
+| `llmf doctor --no-save` | Do not write health cache |
 | `llmf providers` | Provider table |
 | `llmf health` | Quick OK/FAIL ping |
-| `llmf serve` | Local OpenAI-compatible server |
-| `llmf version` | Print version |
+| `llmf serve` | Local OpenAI-compatible HTTP server |
+| `llmf version` | Print package version |
 
 **Flags:** `-m/--model`, `-p/--provider`, `-s/--system`, `-i/--interactive`, `--image`, `--max-tokens`, `-t/--temperature`, `--stream`, `--json`, `-v`, `--routing ranked|adaptive`, `--race N`, `--timeout`, `--proxy`, `--live`, `--all`, `--include-limited`, `--include-non-chat`, `--no-save`, `--host`, `--port`, `--api-key`, `--cors`, `--strict-models`, `--no-fallback`.
 
 ```text
-$ llmf "Say hi in one short sentence."
 $ llmf -v "2+2=?"
-$ llmf --json "Say hi in one short sentence."
 $ llmf models
-$ llmf models resolve fast
 $ llmf doctor
 $ llmf serve --port 8000
 ```
 
 ---
 
-## What’s new in 0.5.0
+## Behaviour
 
-- **Providers:** `ch-at` (early in chain / `best`), `rewind-ai` (Qwen / gpt-4o-mini; sign-in-only marked broken), `nottrack` (SSE debate adapter — **opt-in only**, not in automatic fallback; use `provider="nottrack"`).
-- **`ProviderSpec.auto=False`:** stays out of the auto chain, still usable with `provider=`.
-- BlockRun / Pollinations catalogue tweaks (`openai-fast` ≡ `openai`).
-
-Earlier (0.4.x): smarter 429 classes, chat/free-only live catalog by default, dynamic `fast` tag, `vision_timeout`, Retry-After scaling — see [CHANGELOG.md](CHANGELOG.md).
-
----
-
-## Behaviour notes
-
-- Fallback prefers faster/cleaner targets; failures get cooldowns (rate-limit / capacity / paid messages differ).
-- `routing="adaptive"` uses latency EWMA; `race=N` hedges parallel requests.
-- `doctor` / `models.check()` results cached ~24h.
+- Automatic fallback with cooldowns: rate-limit vs capacity vs “paid model” messages differ (see CHANGELOG 0.4.x).
+- `routing="adaptive"` (latency EWMA), `race=N` (parallel hedge).
+- Live catalog / doctor default to **chat + free** models only.
+- Dynamic `fast` tag from measured latency; `vision_timeout` (default 90s) for image calls.
+- Providers with `auto=False` (e.g. `nottrack`) never join the default chain.
 - Total failure → `llmf.AllProvidersFailed` with `.errors`.
 
 ---
@@ -203,8 +201,8 @@ Earlier (0.4.x): smarter 429 classes, chat/free-only live catalog by default, dy
 
 - Endpoints are unofficial and free; they may change or vanish.
 - Do not send secrets or personal data.
-- Opt-in providers (`nottrack`) and `discover()` are explicit.
-- `llmf serve` defaults to **localhost**, no CORS, unless you pass `--cors` / `--api-key`.
+- Opt-in providers and `discover()` are explicit.
+- `llmf serve` defaults to **127.0.0.1**, no CORS, unless you pass `--cors` / `--api-key`.
 
 ---
 
@@ -216,6 +214,8 @@ cd llmfree
 python -m unittest discover -s tests -v
 python -m build && twine check dist/*
 ```
+
+Full history: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 

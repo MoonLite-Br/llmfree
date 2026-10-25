@@ -23,7 +23,7 @@ print(r.provider, r.model, round(r.latency, 3), r.usage)
 
 ```text
 Name: llmf
-Version: 0.5.0
+Version: 0.5.1
 Summary: llmf (llmfree): free, keyless LLM chat with automatic multi-provider fallback — stdlib only.
 Home-page: https://github.com/MoonLite-Br/llmfree
 Author: Html
@@ -36,7 +36,7 @@ Requires:
 | Field | Value |
 |--------|--------|
 | **Name** | `llmf` |
-| **Version** | `0.5.0` |
+| **Version** | `0.5.1` |
 | **Dependencies** | none |
 | **License** | MIT |
 | **Repository** | https://github.com/MoonLite-Br/llmfree |

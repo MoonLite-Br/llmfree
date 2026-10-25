@@ -1,5 +1,8 @@
 # Changelog
 
+## 0.5.1
+- Documentation: full PyPI/README (API, CLI, pip show, 0.5.0 providers). No code changes vs 0.5.0.
+
 ## 0.5.0
 - New providers: `ch-at` (GPT-4o, no auth, no /models; first in the chain and in the `best` tag), `rewind-ai`
   (`qwen/qwen-2.5-7b-instruct`, `gpt-4o-mini`; trailing-slash path + `Origin` header; sign-in-only models are marked broken),

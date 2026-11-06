@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "llmf"
 dynamic = ["version"]
-description = "llmf (llmfree): free, keyless LLM chat with automatic multi-provider fallback — stdlib only."
+description = "llmf (llmfree): one dead-simple call for free, keyless LLM endpoints, with automatic fallback."
 readme = "README.md"
 requires-python = ">=3.8"
 license = { text = "MIT" }
-authors = [{ name = "Html", email = "moonlite-br@users.noreply.github.com" }]
-keywords = ["llm", "ai", "chat", "free", "keyless", "openai-compatible", "fallback", "termux", "curl_cffi"]
+authors = [{ name = "Html" }]
+keywords = ["llm", "ai", "chat", "free", "keyless", "openai-compatible", "fallback", "termux"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Intended Audience :: Developers",
@@ -31,15 +31,12 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
+# Optional, lightweight browser-like TLS/HTTP2 fingerprint (prebuilt wheels; llmf works without it).
 stealth = ["curl_cffi>=0.7"]
 
 [project.urls]
 Homepage = "https://github.com/MoonLite-Br/llmfree"
-Documentation = "https://github.com/MoonLite-Br/llmfree#readme"
-Repository = "https://github.com/MoonLite-Br/llmfree"
 Issues = "https://github.com/MoonLite-Br/llmfree/issues"
-Changelog = "https://github.com/MoonLite-Br/llmfree/blob/main/CHANGELOG.md"
-PyPI = "https://pypi.org/project/llmf/"
 
 [project.scripts]
 llmf = "llmf.cli:main"
@@ -51,4 +48,7 @@ version = { attr = "llmf._version.__version__" }
 where = ["src"]
 
 [tool.setuptools.package-data]
-llmf = ["py.typed"]
+llmf = ["py.typed", "web/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

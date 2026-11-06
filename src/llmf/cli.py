@@ -20,7 +20,8 @@ usage: llmf [options] "question"            ask once (also reads stdin)
        llmf models [list|check|resolve NAME]  what exists / does it really work / what does NAME expand to
        llmf doctor [--all]                  call every model once and report (alias of `models check`)
        llmf providers | health              endpoints / quick ping
-       llmf serve [--port N]                local OpenAI-compatible server
+       llmf serve [--port N] [--public|--cloudflare] [--ui] [--html F] [--app CMD]
+                                            OpenAI-compatible server (see `llmf --help` for all flags)
 """
 
 
@@ -53,9 +54,38 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--impersonate", help="curl_cffi browser profile (default: chrome)")
     p.add_argument("--host", default="127.0.0.1", help="serve: bind address (default 127.0.0.1)")
     p.add_argument("--port", type=int, default=8000, help="serve: port (default 8000)")
-    p.add_argument("--max-concurrent", type=int, default=48,
-                   help="serve: chats in flight before answering 429 'busy' (0 = unlimited; default 48)")
-    p.add_argument("--api-key", help="serve: require this bearer key")
+    p.add_argument("--max-concurrent", type=int, default=None,
+                   help="serve: chats in flight before answering 429 'busy' (0 = unlimited; default 48, public 32)")
+    p.add_argument("--api-key", action="append", help="serve: require this bearer key (repeatable)")
+    p.add_argument("--api-keys-file", help="serve: file with one API key per line")
+    p.add_argument("--public", action="store_true",
+                   help="serve: internet-facing profile (bind 0.0.0.0, mandatory key, rate limits, bans, antibot)")
+    p.add_argument("--cloudflare", action="store_true",
+                   help="serve: expose through a Cloudflare quick tunnel (needs `cloudflared`; implies --public)")
+    p.add_argument("--tunnel-token", help="serve: run a named Cloudflare tunnel with this token (implies --public)")
+    p.add_argument("--ui", action="store_true", help="serve: built-in AI chat web page")
+    p.add_argument("--web", "--html", dest="web", metavar="PATH",
+                   help="serve: serve this HTML file (only that file) or static directory")
+    p.add_argument("--app", metavar="CMD", help='serve: run your web app and proxy to it, e.g. --app "node main.js"')
+    p.add_argument("--app-port", type=int, help="serve: port the app listens on (default 3000; passed as $PORT)")
+    p.add_argument("--app-dir", help="serve: working directory for --app")
+    p.add_argument("--rate", type=float, help="serve: requests/min per API key (public default 120)")
+    p.add_argument("--ip-rate", type=float, help="serve: requests/min per client IP (public default 240)")
+    p.add_argument("--session-rate", type=float, default=12, help="serve: chats/min per web visitor (default 12)")
+    p.add_argument("--allow-ip", action="append", help="serve: only accept these IPs/CIDRs (repeatable)")
+    p.add_argument("--deny-ip", action="append", help="serve: reject these IPs/CIDRs (repeatable)")
+    p.add_argument("--trust-proxy", action="store_true", help="serve: trust CF-Connecting-IP/X-Forwarded-For from a local proxy")
+    p.add_argument("--cors-origin", action="append", help="serve: allow this browser origin (repeatable)")
+    p.add_argument("--max-body", type=int, help="serve: max request body in bytes (public default 1 MiB)")
+    p.add_argument("--max-tokens-cap", type=int, help="serve: clamp max_tokens (public default 4096)")
+    p.add_argument("--tls-cert", help="serve: PEM certificate (HTTPS)")
+    p.add_argument("--tls-key", help="serve: PEM private key")
+    p.add_argument("--log-file", help="serve: JSON-lines access log ('-' = stderr); prompts are never logged")
+    p.add_argument("--csp", help="serve: Content-Security-Policy header for every response")
+    p.add_argument("--antibot", choices=("pow", "turnstile", "off"), help="serve: web visitor check (public default pow)")
+    p.add_argument("--pow-bits", type=int, default=16, help="serve: proof-of-work difficulty (default 16 bits)")
+    p.add_argument("--turnstile-secret", help="serve: Cloudflare Turnstile secret key")
+    p.add_argument("--turnstile-sitekey", help="serve: Cloudflare Turnstile site key")
     p.add_argument("--cors", action="store_true", help="serve: allow browser (CORS) access")
     p.add_argument("--strict-models", action="store_true", help="serve: 404 on unknown model names")
     p.add_argument("--no-fallback", action="store_true", help="serve: never switch model on failure")
@@ -241,10 +271,35 @@ def main(argv: Optional[List[str]] = None) -> int:
                 c.configure(model=a.model if not a.provider else "%s/%s" % (a.provider, a.model))
             elif a.provider:
                 c.configure(model=a.provider)
+            keys = list(a.api_key or [])
+            if a.api_keys_file:
+                try:
+                    with open(a.api_keys_file, encoding="utf-8") as fh:
+                        keys += [ln.strip() for ln in fh if ln.strip() and not ln.startswith("#")]
+                except OSError as e:
+                    print("error: cannot read %s: %s" % (a.api_keys_file, e.strerror or e), file=sys.stderr)
+                    return 2
+            tunnelled = a.cloudflare or bool(a.tunnel_token)
+            public = a.public or tunnelled
+            host = a.host
+            if public and not tunnelled and host == "127.0.0.1":
+                host = "0.0.0.0"
+            if tunnelled and not (a.web or a.app or a.ui):
+                a.ui = True
             try:
-                serve(c, a.host, a.port, api_key=a.api_key, cors=a.cors,
+                serve(c, host, a.port, api_key=keys or None, cors=a.cors, cors_origins=a.cors_origin or (),
                       strict_models=a.strict_models, fallback=not a.no_fallback,
-                      max_concurrent=a.max_concurrent)
+                      max_concurrent=a.max_concurrent, public=public, cloudflare=a.cloudflare,
+                      tunnel_token=a.tunnel_token, ui=a.ui, web=a.web, app=a.app, app_port=a.app_port,
+                      app_dir=a.app_dir, rate=a.rate, ip_rate=a.ip_rate, session_rate=a.session_rate,
+                      allow_ip=a.allow_ip or (), deny_ip=a.deny_ip or (), trust_proxy=a.trust_proxy,
+                      max_body=a.max_body, max_tokens_cap=a.max_tokens_cap, tls_cert=a.tls_cert,
+                      tls_key=a.tls_key, log_file=a.log_file, csp=a.csp, antibot=a.antibot,
+                      pow_bits=a.pow_bits, turnstile_secret=a.turnstile_secret,
+                      turnstile_sitekey=a.turnstile_sitekey)
+            except ValueError as e:
+                print("error: %s" % e, file=sys.stderr)
+                return 2
             except OSError as e:          # includes socket.gaierror (bad host) and "address in use"
                 hint = ""
                 if str(a.host).isdigit():

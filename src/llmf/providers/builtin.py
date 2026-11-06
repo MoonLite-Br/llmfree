@@ -52,7 +52,6 @@ BUILTIN: List[ProviderSpec] = [
         default_model="gpt-oss-120b",
         models=[
             M("gpt-oss-120b"),
-            M("Mistral-Nemo-Instruct-2407"),
             M("Qwen3.5-397B-A17B"),
             M("Qwen2.5-VL-72B-Instruct", vision=True),
         ],
@@ -73,8 +72,6 @@ BUILTIN: List[ProviderSpec] = [
             M("cohere/north-mini-code:free"),
             M("nvidia/nemotron-3.5-super-vl:free", vision=True),
             M("dots-studio/dots-3-note-preview:free"),
-            M("liquid/lfm-2.5-2.6b:free"),
-            M("poolside/laguna-s-2.1:free"),
         ],
         note="Strongest free model. ~200 requests/hour/IP.",
     ),
@@ -199,7 +196,6 @@ TAGS: Dict[str, List[Tuple[str, str]]] = {
         ("chatjimmy", "llama3.1-8B"),
         ("llm7", "gpt-oss:20b"),
         ("pollinations", "openai"),
-        ("ovh", "Mistral-Nemo-Instruct-2407"),
         ("kilo-gateway", "kilo-auto/small"),
     ],
     "best": [

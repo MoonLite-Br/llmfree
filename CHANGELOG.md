@@ -1,8 +1,29 @@
 # Changelog
 
-## 0.6.2
-- Release packaging: full English README, correct GitHub/PyPI URLs, static version badges.
-- Ships the load-aware routing + serve concurrency work documented under 0.6.1.
+## 0.7.0
+- Catalogue: removed `ovh/Mistral-Nemo-Instruct-2407`, `kilo-openrouter/liquid/lfm-2.5-2.6b:free` and
+  `kilo-openrouter/poolside/laguna-s-2.1:free` (404 in the latest real-network `doctor`, 0/3 alive).
+- Hardening: proxy headers (`CF-Connecting-IP`, `X-Forwarded-*`) are trusted only from a **loopback** peer (a LAN
+  neighbour can no longer spoof its IP behind `--cloudflare`); public profile caps simultaneous connections
+  (`max_connections`, default 256); TLS probes on a plain port no longer print tracebacks.
+- Docs: README rewritten (English) + `README.vi.md`; project URLs point to MoonLite-Br/llmfree.
+- **`llmf serve --public`**: internet-facing profile. Binds `0.0.0.0`, makes an API key mandatory (one is generated and
+  printed if you give none), turns on per-key / per-IP rate limits (token bucket, `429` + `Retry-After`), a temporary ban
+  after repeated bad keys, body / `max_tokens` caps, security headers (nosniff, no-referrer, X-Frame-Options, HSTS on TLS),
+  socket timeouts, generic error messages (no tracebacks, no upstream details, no Python version) and the anti-bot check.
+- More flags: repeatable `--api-key` + `--api-keys-file`, `--rate`, `--ip-rate`, `--session-rate`, `--allow-ip` / `--deny-ip`
+  (CIDR), `--trust-proxy` (CF-Connecting-IP / X-Forwarded-For, only from a local proxy), `--cors-origin` (allow-list),
+  `--max-body`, `--max-tokens-cap`, `--tls-cert/--tls-key`, `--log-file` (JSON lines; prompts and keys are never logged), `--csp`.
+- **Anti-bot** for web pages: `--antibot pow` (default when public; stateless HMAC proof of work solved in the browser,
+  IP-bound short-lived session token, replay protection, difficulty rises for noisy IPs) or `--antibot turnstile`
+  (Cloudflare Turnstile verified server-side, fail-closed). Web sessions are tighter than API keys: no images / tools,
+  40 messages, 24k chars, `max_tokens` 1024, own rate limit. Browser helper at `/_llmf/client.js` (`llmf.chat()`, `llmf.stream()`, `llmf.fetch()`).
+- **`--ui`**: built-in chat page (streaming, history in localStorage, rendered with text nodes only: no HTML injection).
+- **`--web PATH` (alias `--html`)**: serve one HTML file (only that file, never its folder) or a static directory
+  (no `..`, no dotfiles, no symlink escape, SPA fallback).
+- **`--app "node main.js"`** (+ `--app-port`, `--app-dir`): runs your web project as a child process (gets `$PORT`,
+  `$OPENAI_BASE_URL`, `$OPENAI_API_KEY`) and reverse-proxies to it, behind the same IP rules and limits.
+- **`--cloudflare`** / `--tunnel-token`: uses your own `cloudflared` (quick tunnel, or a named one) and prints the public URL.
 
 ## 0.6.1
 - **Load-aware routing** (threads, `race`, `llmf serve`): each provider has a cap of simultaneous requests

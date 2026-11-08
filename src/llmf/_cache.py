@@ -131,7 +131,8 @@ def pace_set(directory: Optional[str], provider: str, when: float) -> None:
             data = {}
         cutoff = time.time() - 3600
         data = {k: v for k, v in data.items() if isinstance(v, (int, float)) and v > cutoff}
-        data[provider] = when
+        old = data.get(provider)
+        data[provider] = max(when, old) if isinstance(old, (int, float)) and old == old and old <= when + 600 else when   # never move a slot back
         fd, tmp = tempfile.mkstemp(dir=directory, prefix=".pace-")
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f)

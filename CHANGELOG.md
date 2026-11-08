@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.7.6
+- `llmf serve` validates its options and fails with a one-line error (exit code 2) instead of a traceback or a
+  misleading message: `--port` outside 0-65535, unreadable TLS certificate/key, `--tls-key` without `--tls-cert`,
+  negative limits, `--max-body 0`, and `--pow-bits` outside 8-28 (99 bits made the web chat unsolvable).
+- Cross-process pacing: a slower thread or process can no longer write an older slot over a newer one.
+
 ## 0.7.5 (one package again, serve error fix)
 - **No more `llmf[serve]`.** The internet-facing server (`--public`, `--cloudflare`, `--ui`, `--html`, `--app`,
   anti-bot, rate limits, bans, IP rules, TLS, access log) is part of `pip install llmf` again, still stdlib-only.
@@ -9,6 +15,7 @@
   a malformed request (bad request line, unsupported method such as TRACE/CONNECT, oversized URI or header, too many
   headers, bad HTTP version). The connection died with a traceback in the log instead of an HTTP error. Such requests
   now get a small JSON error and the connection is closed; header values are always converted to `str`.
+- Tests: raw-socket malformed-request suite for the local, keyed and public servers.
 
 ## 0.7.4 (security and robustness audit)
 - **Local server vs. web pages**: `llmf serve` (both the core and `llmf-serve`) now refuses DNS-rebinding (a foreign

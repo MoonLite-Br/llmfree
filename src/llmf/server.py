@@ -72,6 +72,21 @@ class _Config:
         for k, v in (_PUBLIC if o["public"] else _LOCAL).items():
             if o[k] is None:
                 o[k] = v
+        if o["tls_key"] and not o["tls_cert"]:
+            raise ValueError("--tls-key needs --tls-cert")
+        if not 8 <= int(o["pow_bits"]) <= 28:
+            raise ValueError("--pow-bits must be between 8 and 28 (higher is too slow for phones)")
+        for name in ("max_body", "max_concurrent", "socket_timeout"):
+            if float(o[name]) < 0:
+                raise ValueError("--%s must not be negative" % name.replace("_", "-"))
+        if o["max_body"] == 0:
+            raise ValueError("--max-body must be at least 1")
+        for name in ("rate", "ip_rate", "session_rate", "max_tokens_cap"):
+            if o[name] is not None and float(o[name]) < 0:
+                raise ValueError("--%s must not be negative" % name.replace("_", "-"))
+        for name in ("port", "app_port"):
+            if o.get(name) is not None and not 0 <= int(o[name]) <= 65535:
+                raise ValueError("--%s must be between 0 and 65535" % name.replace("_", "-"))
         self.client = client
         keys = o["api_key"]
         self.api_keys: List[str] = [keys] if isinstance(keys, str) else [k for k in (keys or ()) if k]
@@ -675,6 +690,8 @@ def make_handler(cfg: _Config):
 def make_server(client: Client, host: str = "127.0.0.1", port: int = 8000, **opts: Any) -> ThreadingHTTPServer:
     """Build (but do not run) the server. See ``_DEFAULTS`` for the options (``llmf serve --help`` lists the flags)."""
     cfg = _Config(client, opts)
+    if not 0 <= int(port) <= 65535:
+        raise ValueError("--port must be between 0 and 65535")
     srv = _Server((host, port), make_handler(cfg))
     srv.cfg = cfg
     cfg.loopback_only = (not cfg.public and not cfg.trust_proxy
@@ -685,7 +702,11 @@ def make_server(client: Client, host: str = "127.0.0.1", port: int = 8000, **opt
     if opts.get("tls_cert"):
         ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
         ctx.minimum_version = ssl.TLSVersion.TLSv1_2
-        ctx.load_cert_chain(opts["tls_cert"], opts.get("tls_key") or None)
+        try:
+            ctx.load_cert_chain(opts["tls_cert"], opts.get("tls_key") or None)
+        except (OSError, ssl.SSLError) as e:
+            srv.server_close()
+            raise ValueError("cannot load the TLS certificate/key (%s): %s" % (opts["tls_cert"], getattr(e, "strerror", None) or e)) from None
         srv.ssl_context = ctx
     return srv
 

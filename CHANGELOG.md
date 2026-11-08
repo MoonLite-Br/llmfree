@@ -1,5 +1,9 @@
 # Changelog
 
+## 0.7.7
+- Docs: full changelog is now inlined in README so it appears on the PyPI project page
+  (the relative `CHANGELOG.md` link was not resolvable there).
+
 ## 0.7.6
 - `llmf serve` validates its options and fails with a one-line error (exit code 2) instead of a traceback or a
   misleading message: `--port` outside 0-65535, unreadable TLS certificate/key, `--tls-key` without `--tls-cert`,

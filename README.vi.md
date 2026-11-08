@@ -119,4 +119,4 @@ Thứ tự fallback: `ch-at → rewind-ai → ovh → kilo-openrouter → freeai
 git clone https://github.com/MoonLite-Br/llmfree && cd llmfree
 pip install -e .
 ```
-Xem [CHANGELOG.md](CHANGELOG.md). MIT © 2026 Html / MoonLite-Br
+Xem phần **Changelog** trong [README.md](README.md) (đầy đủ trên PyPI). MIT © 2026 Html / MoonLite-Br

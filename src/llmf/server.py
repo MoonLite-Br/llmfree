@@ -1,4 +1,4 @@
-"""``llmf serve`` - an OpenAI-compatible HTTP server backed by llmf (stdlib only).
+"""``llmf serve``: OpenAI-compatible server (stdlib only, part of ``pip install llmf``).
 
 Point any OpenAI client at ``http://127.0.0.1:8000/v1`` and it uses the free endpoints, with fallback.
 
@@ -101,6 +101,8 @@ class _Config:
         self.static = _web.StaticSite(o["web"]) if o["web"] else None
         self.app_port = o["app_port"]
         self.tls = bool(o["tls_cert"])
+        self.loopback_only = False          # set by make_server: bound to loopback and not behind a tunnel
+        self.hosts: frozenset = frozenset()
         self.sessions = bool(self.ui or self.static or self.app_port or o["antibot"])
         mode = o["antibot"] or ("pow" if o["public"] else "off")
         self.antibot: Optional[sec.Antibot] = None
@@ -178,8 +180,34 @@ def make_handler(cfg: _Config):
         protocol_version = "HTTP/1.0"  # one request per connection; streams end on close
         timeout = cfg.socket_timeout
 
+        # Safe defaults: send_error() can run from parse_request() (bad request line, too many headers,
+        # oversized URI...) before _entry() has initialised the per-request state.
+        _t0 = 0.0
+        _status = 0
+        _who = "-"
+        _mname = None
+        _proxied = False
+        _sent: frozenset = frozenset()
+
         def version_string(self) -> str:
             return "llmf"
+
+        def send_error(self, code, message=None, explain=None):
+            """Always answer protocol errors with the same small JSON body (never HTML, never a traceback)."""
+            try:
+                self._sent = set()
+                short = self.responses.get(code, ("error",))[0]
+                data = json.dumps(_err(short, "invalid_request_error", "bad_request")).encode()
+                self.send_response(code, message)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Length", str(len(data)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if getattr(self, "command", "") != "HEAD" and code >= 200 and code not in (204, 304):
+                    self.wfile.write(data)
+            except (OSError, ValueError):
+                pass
+            self.close_connection = True
 
         def log_message(self, fmt, *args):  # quiet by default
             pass
@@ -190,15 +218,18 @@ def make_handler(cfg: _Config):
             super().send_response(code, message)
 
         def send_header(self, keyword, value):
-            self._sent.add(keyword.lower())
-            super().send_header(keyword, value)
+            if not isinstance(self._sent, set):
+                self._sent = set()
+            self._sent.add(str(keyword).lower())
+            super().send_header(keyword, str(value))
 
         def end_headers(self):
             def add(k: str, v: str) -> None:
                 if k.lower() not in self._sent:
                     self.send_header(k, v)
 
-            origin = (self.headers.get("Origin") or "").rstrip("/")
+            hdrs = getattr(self, "headers", None)      # absent when parse_request failed early
+            origin = ((hdrs.get("Origin") if hdrs is not None else "") or "").rstrip("/")
             if cfg.cors:
                 add("Access-Control-Allow-Origin", "*")
             elif origin and origin in cfg.cors_origins:
@@ -296,6 +327,23 @@ def make_handler(cfg: _Config):
             if banned:
                 cfg.log({"event": "ban", "ip": ip})
 
+        def _guard(self) -> bool:
+            """API / session routes only: refuse DNS-rebinding (foreign ``Host`` on a loopback server) and
+            cross-site browser requests (``Origin`` that is neither allowed nor this server itself)."""
+            host = (self.headers.get("Host") or "").lower()
+            if cfg.loopback_only and host:
+                name = host if host.endswith("]") else host.rsplit(":", 1)[0]
+                if name not in cfg.hosts:
+                    self._json(403, _err("forbidden host", "invalid_request_error", "forbidden"))
+                    return False
+            origin = (self.headers.get("Origin") or "").rstrip("/").lower()
+            if origin and not cfg.cors and origin not in [o.lower() for o in cfg.cors_origins]:
+                same = origin.split("://", 1)[-1] == host
+                if not same:
+                    self._json(403, _err("cross-origin request not allowed", "invalid_request_error", "forbidden"))
+                    return False
+            return True
+
         # ------------------------------------------------------------- entry
         def _entry(self, method: str) -> None:
             self._t0 = time.monotonic()
@@ -357,14 +405,14 @@ def make_handler(cfg: _Config):
             if path == "/health":
                 return self._json(200, {"status": "ok", "service": "llmf"})
             if path.startswith("/_llmf/"):
-                return self._internal(method, path, ip)
+                return self._guard() and self._internal(method, path, ip)
             if path == "/v1" or path.startswith("/v1/"):
-                return self._api(method, path[3:].rstrip("/"), ip)
+                return self._guard() and self._api(method, path[3:].rstrip("/"), ip)
             if cfg.static is None and cfg.app_port is None and not cfg.ui:
                 if path in ("/", ""):
                     return self._json(200, {"status": "ok", "service": "llmf"})
                 if path in ("/models", "/chat/completions"):     # legacy un-prefixed form
-                    return self._api(method, path, ip)
+                    return self._guard() and self._api(method, path, ip)
                 return self._json(404, _err("not found: %s" % path, "invalid_request_error", "not_found"))
             return self._site(method, path, ip)
 
@@ -629,6 +677,9 @@ def make_server(client: Client, host: str = "127.0.0.1", port: int = 8000, **opt
     cfg = _Config(client, opts)
     srv = _Server((host, port), make_handler(cfg))
     srv.cfg = cfg
+    cfg.loopback_only = (not cfg.public and not cfg.trust_proxy
+                         and host in ("127.0.0.1", "localhost", "::1", "[::1]"))
+    cfg.hosts = frozenset(("localhost", "127.0.0.1", "[::1]", "::1", host.lower()))
     if cfg.public:
         srv.conn_slots = threading.BoundedSemaphore(int(opts.get("max_connections") or 256))
     if opts.get("tls_cert"):

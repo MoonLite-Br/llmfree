@@ -57,9 +57,18 @@ class _State:
     def rate_wait(self, provider: str, min_interval: float) -> float:
         """Reserve a request slot; return seconds to sleep before using it."""
         now = time.monotonic()
+        track = min_interval >= _cache.PACE_MIN_INTERVAL
+        dirpath = _cache.cache_dir() if track else None
         with self._lock:
+            if track and provider not in self._last:     # first use in this process: honour the previous one's slot
+                prev = _cache.pace_last(dirpath, provider)
+                wall = time.time()
+                if prev is not None and wall - 3600 < prev <= wall + 2 * min_interval:   # a tampered file cannot stall us
+                    self._last[provider] = now - (time.time() - prev)
             slot = max(now, self._last.get(provider, -1e9) + min_interval)
             self._last[provider] = slot
+        if track:
+            _cache.pace_set(dirpath, provider, time.time() + (slot - now))
         return slot - now
 
     def fail(self, err: ProviderError) -> None:
@@ -604,7 +613,9 @@ class Client:
         try:
             comp = ADAPTERS[spec.kind].complete(spec, t.model, messages, opts,
                                                 max(1.0, min(opts.timeout or self.timeout, end - time.monotonic())))
-        except ProviderError as e:
+        except Exception as e:      # an adapter bug or a freak upstream answer must not abort the fallback chain
+            if not isinstance(e, ProviderError):
+                e = ProviderError(t.provider, t.model, "unexpected %s: %s" % (type(e).__name__, e), code="internal")
             log.debug("failed: %s", e)
             self._state.fail(e)
             errors.append(e)

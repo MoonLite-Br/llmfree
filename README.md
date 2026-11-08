@@ -16,8 +16,10 @@ English · [Tiếng Việt](README.vi.md)
 </div>
 
 ```bash
-pip install -U llmf
+pip install -U llmf                  # everything: library, CLI, local + internet-facing server (stdlib only)
+pip install -U "llmf[stealth]"       # optional: + curl_cffi (browser-like TLS fingerprint)
 ```
+One package, no Flask. Quote the brackets in Termux/zsh.
 
 ```python
 import llmf
@@ -49,7 +51,7 @@ runs on Linux, macOS, Windows and **Termux/Android**.
 | **Aliases** | `fast`, `best`, `code`, `vision`, `reasoning`: ordered, re-ranked live from measured latency. |
 | **Proxy + SOCKS** | `http`, `https`, `socks4/4a/5/5h` (pure stdlib). Your own proxy only; llmf never scrapes or rotates public proxies. |
 | **Optional browser-like TLS** | `pip install "llmf[stealth]"` adds `curl_cffi` (prebuilt wheels). Falls back to stdlib if unavailable. |
-| **`llmf serve`** | OpenAI-compatible HTTP server for any app, extension or addon; can be hardened and exposed to the internet. |
+| **`llmf serve`** | OpenAI-compatible HTTP server for any app, extension or addon. It can be hardened and exposed to the internet (`--public`, `--cloudflare`). |
 | **Web chat in one flag** | `--ui` built-in chat page, `--html page.html` to host your page, `--app "node main.js"` to run and proxy your own project. |
 | **Cloudflare tunnel** | `--cloudflare` publishes the server through your own `cloudflared`, with the hardening profile switched on. |
 | **Anti-bot** | Proof-of-work (default) or Cloudflare Turnstile before a browser visitor gets a short-lived, IP-bound session. |
@@ -222,6 +224,7 @@ What `--public` / `--cloudflare` switch on, and what they do **not** do.
 - **Abuse control**: token-bucket limits per key / IP / visitor, connection cap, socket timeouts, request-size and `max_tokens` caps.
 - **Anti-bot**: stateless HMAC-signed proof-of-work challenge (single use, expires in 2 min, difficulty rises for noisy IPs) → session token bound to the client IP, 30 min. Turnstile is verified server-side and **fails closed**. Web sessions cannot send images or tools and get tighter limits than API keys.
 - **Web hygiene**: nosniff, no-referrer, frame protection, `Cache-Control: no-store` on API replies, strict CSP on the built-in UI, no HTML injection (text nodes only), no directory listing, no Python version banner, generic error messages (no tracebacks or upstream details).
+- **Local safety**: loopback servers refuse foreign `Host` headers (DNS rebinding) and cross-site `Origin`s; only `http(s)` URLs are fetched; responses, stream lines and stream duration are capped; remote text is stripped of terminal escapes.
 - **Proxy**: llmf credentials are stripped before forwarding to `--app`; client-supplied `X-Forwarded-*` is replaced; proxy headers are trusted only from loopback, so a LAN neighbour cannot spoof `CF-Connecting-IP`.
 - **Not provided**: this is not a WAF or DDoS shield; put Cloudflare (or similar) in front for volumetric attacks. Quick-tunnel URLs change on every run. WebSocket upgrades are not proxied to `--app`. `--app` runs the command *you* give it. Proof of work raises the cost of scripted abuse; it does not make it impossible. Free upstreams still limit total throughput.
 
@@ -229,7 +232,7 @@ Found a vulnerability? Please open a private security advisory on GitHub rather 
 
 ## Providers
 
-Auto-selected fallback order: `ch-at → rewind-ai → ovh → kilo-openrouter → freeai → chatjimmy → kilo-gateway → pollinations → llm7 → blockrun → chatai`. `nottrack` is opt-in (`provider="nottrack"`).
+Auto-selected fallback order: `ch-at → rewind-ai → ovh → kilo-openrouter → freeai → chatjimmy → kilo-gateway → pollinations → llm7 → blockrun → chatai`. `nottrack`, `notrack-ai` and `apifreellm` are opt-in (`provider="..."`).
 
 | Provider | Typical models | Notes |
 |---|---|---|
@@ -243,7 +246,9 @@ Auto-selected fallback order: `ch-at → rewind-ai → ovh → kilo-openrouter �
 | `chatjimmy` | `llama3.1-8B` | Extremely fast, non-streaming, a few requests/IP/day. |
 | `blockrun` | Nemotron family, `llama-3.2-11b-vision` | ~12 s upstream timeout; flaky. |
 | `chatai` | `claude-haiku-5.5`, `gemini-2.5-flash-lite`, … | Premium but ~3-5 requests/IP/day; last resort. |
-| `nottrack` | `debate` | Opt-in; several speakers, use `timeout >= 60`. |
+| `nottrack` | `debate` | Opt-in (`nottrack.com`); several speakers, use `timeout >= 60`. |
+| `notrack-ai` | `notrack-uncensored` | Opt-in (`notrack.ai`); anonymous, uncensored, quality varies; `persona="concise\|normal\|detailed\|creative"`; fresh chat per call. |
+| `apifreellm` | `apifree-community` | Opt-in; community tier, stateless single-turn, plain text, ~7 s; limited per IP (llmf spaces calls 21 s, even across commands). |
 
 Run `llmf models` for what is alive on *your* network right now.
 
@@ -258,8 +263,7 @@ Run `llmf models` for what is alive on *your* network right now.
 
 ```bash
 git clone https://github.com/MoonLite-Br/llmfree && cd llmfree
-python -m unittest discover -s tests -v       # offline: fake provider, SOCKS and curl_cffi servers
-python tests/browser_ui.py                    # optional: Playwright check of the web chat
+pip install -e .
 ```
 
 ```
@@ -270,10 +274,10 @@ src/llmf/
   errors.py        error classification and cooldown policy
   _http.py _curl.py _socks.py   transports (stdlib, optional curl_cffi, SOCKS)
   _cache.py        health + survival history
-  server.py        `llmf serve`
-  _security.py     rate limiter, bans, CIDR, proof-of-work / Turnstile
-  _web.py _tunnel.py  static files, app process + reverse proxy, cloudflared
-  web/             built-in chat page and browser client
+  server.py        `llmf serve`: local and --public server, web chat, static/app hosting
+  _security.py     limits, bans, IP rules, PoW / Turnstile
+  _web.py _tunnel.py   static site + app proxy, Cloudflare tunnel
+  web/             chat page + browser client
   cli.py           the `llmf` command
 ```
 

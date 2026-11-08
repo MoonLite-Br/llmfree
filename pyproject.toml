@@ -31,8 +31,8 @@ classifiers = [
 dependencies = []
 
 [project.optional-dependencies]
-# Optional, lightweight browser-like TLS/HTTP2 fingerprint (prebuilt wheels; llmf works without it).
-stealth = ["curl_cffi>=0.7"]
+# Core is stdlib-only. Extras are opt-in groups:
+stealth = ["curl_cffi>=0.7"]      # browser-like TLS/HTTP2 fingerprint (prebuilt wheels; llmf works without it)
 
 [project.urls]
 Homepage = "https://github.com/MoonLite-Br/llmfree"
@@ -50,5 +50,3 @@ where = ["src"]
 [tool.setuptools.package-data]
 llmf = ["py.typed", "web/*"]
 
-[tool.pytest.ini_options]
-testpaths = ["tests"]

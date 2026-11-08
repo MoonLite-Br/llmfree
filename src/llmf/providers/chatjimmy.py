@@ -5,6 +5,7 @@ from __future__ import annotations
 import codecs
 import json
 import re
+import time
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
 from .. import _http
@@ -77,12 +78,16 @@ class ChatJimmyAdapter(Adapter):
         holding = False   # a stats sentinel was seen; everything after is held
         started = False
         keep = len(STATS_OPEN) - 1
+        deadline, got = time.monotonic() + _http.MAX_STREAM_SECONDS, 0
         try:
             while True:
+                if time.monotonic() > deadline or got > _http.MAX_BODY:
+                    raise ProviderError(spec.name, model, "network: stream limit exceeded")
                 with translate(spec, model):
                     chunk = resp.read1(4096) if hasattr(resp, "read1") else resp.read(4096)
                 if not chunk:
                     break
+                got += len(chunk)
                 buf += decoder.decode(chunk)
                 if holding:
                     continue

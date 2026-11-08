@@ -86,6 +86,8 @@ def _socks5(sock: socket.socket, p: SocksProxy, host: str, port: int) -> None:
         raise SocksError("not a SOCKS5 proxy")
     if method == 2:
         u, pw = (p.user or "").encode(), (p.password or "").encode()
+        if len(u) > 255 or len(pw) > 255:
+            raise SocksError("SOCKS5 user name / password longer than 255 bytes")
         sock.sendall(b"\x01" + bytes([len(u)]) + u + bytes([len(pw)]) + pw)
         if _recv(sock, 2)[1] != 0:
             raise SocksError("SOCKS5 authentication failed")
@@ -98,6 +100,8 @@ def _socks5(sock: socket.socket, p: SocksProxy, host: str, port: int) -> None:
         addr = (b"\x01" if ip.version == 4 else b"\x04") + ip.packed
     else:
         name = host.encode("idna")
+        if len(name) > 255:
+            raise SocksError("host name too long for SOCKS5")
         addr = b"\x03" + bytes([len(name)]) + name
     sock.sendall(b"\x05\x01\x00" + addr + struct.pack("!H", port))
     ver, rep, _, atyp = _recv(sock, 4)

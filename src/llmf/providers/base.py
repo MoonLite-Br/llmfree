@@ -120,7 +120,7 @@ def translate(spec: ProviderSpec, model: str):
         ) from None
     except _http.NETWORK_ERRORS as e:
         raise ProviderError(spec.name, model, "network: %s" % e) from None
-    except (ValueError, KeyError, IndexError, TypeError) as e:
+    except (ValueError, KeyError, IndexError, TypeError, AttributeError) as e:
         raise ProviderError(spec.name, model, "unparsable response: %r" % (e,)) from None
 
 
@@ -205,6 +205,9 @@ def _is_free(item: Any) -> bool:
     return True
 
 
+_SAFE_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+\-]{0,127}$")
+
+
 def parse_model_list(payload: Any, free_suffix: str = "", chat_only: bool = True) -> List[str]:
     """Ids of the *free* (and by default *chat*) models in a provider's ``/models`` payload."""
     items = payload.get("data", payload.get("models", [])) if isinstance(payload, dict) else payload
@@ -216,6 +219,8 @@ def parse_model_list(payload: Any, free_suffix: str = "", chat_only: bool = True
         if free_suffix and not str(mid).endswith(free_suffix):
             continue
         if chat_only and not is_chat_model(str(mid), it):
+            continue
+        if not _SAFE_ID.match(str(mid)):       # ids come from a remote server and end up in the terminal
             continue
         ids.append(str(mid))
     return ids

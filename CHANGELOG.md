@@ -1,5 +1,65 @@
 # Changelog
 
+## 0.7.5 (one package again, serve error fix)
+- **No more `llmf[serve]`.** The internet-facing server (`--public`, `--cloudflare`, `--ui`, `--html`, `--app`,
+  anti-bot, rate limits, bans, IP rules, TLS, access log) is part of `pip install llmf` again, still stdlib-only.
+  The separate `llmf-serve` package is retired (it is no longer needed and is not published from this release);
+  `pip install "llmf[serve]"` still resolves but now only installs `llmf` (pip warns the extra does not exist).
+- **Fixed: `AttributeError: 'Handler' object has no attribute '_sent'`** (and `headers`) in the server when a client sent
+  a malformed request (bad request line, unsupported method such as TRACE/CONNECT, oversized URI or header, too many
+  headers, bad HTTP version). The connection died with a traceback in the log instead of an HTTP error. Such requests
+  now get a small JSON error and the connection is closed; header values are always converted to `str`.
+
+## 0.7.4 (security and robustness audit)
+- **Local server vs. web pages**: `llmf serve` (both the core and `llmf-serve`) now refuses DNS-rebinding (a foreign
+  `Host` on a loopback-bound server) and cross-site browser requests (an `Origin` that is neither allowed by
+  `--cors` / `--cors-origin` nor the server itself). curl and the OpenAI SDKs send no `Origin` and are unaffected.
+  Also: a negative `Content-Length` is rejected (it used to read until the client closed), non-object JSON bodies
+  give 400, the core server has a socket timeout and no longer announces the Python version.
+- **Network hygiene**: only `http(s)` URLs are ever opened (a `file://` URL in a discovery listing could be read);
+  responses are capped at 32 MB, also after gunzip (zip bombs); stream lines are capped at 1 MB with a 15-minute
+  wall-clock limit (an endless or dripping stream is cut off and the next provider is tried).
+- **Discovery** (`stillworks`) keeps only public http(s) hosts: loopback, LAN, link-local, `.local`, credentials in the
+  URL and odd model ids are dropped, so a stranger's listing cannot aim llmf at your own network.
+- **Untrusted text**: control / escape characters are stripped from every remote error message and model id
+  (terminal-escape injection); proxy passwords are never echoed in error messages.
+- **Robustness**: a malformed upstream answer (e.g. `choices` that is not an object) is a normal provider failure that
+  falls back, not an `AttributeError`; any unexpected adapter exception is contained per attempt; the docs-agent tool
+  tolerates non-object answers and URL-quotes the thread id; a tampered `pace.json` cannot stall the client;
+  SOCKS5 rejects over-long credentials / host names.
+- CI runs with read-only token permissions.
+
+## 0.7.3
+- Real-network `doctor` confirmed `notrack-ai/notrack-uncensored` (8.7 s) and `apifreellm/apifree-community` (7.1 s); streaming works on `notrack-ai`.
+- **Pacing now survives between processes**: providers with a minimum gap >= 5 s (`apifreellm` 21 s, `pollinations` 15 s)
+  record their last slot in `~/.cache/llmf/pace.json`, so two `llmf` commands in a row wait instead of hitting
+  "429 Please wait 20 seconds". (`LLMF_NO_CACHE=1` turns it off.)
+- CLI: `--persona concise|normal|detailed|creative` (for `notrack-ai`).
+
+## 0.7.2
+- Two new **opt-in** providers (never in the automatic chain; low quality, tight limits), models keep the server's own names:
+  - `notrack-ai` (`notrack.ai`): model `notrack-uncensored`. Anonymous SSE chat with an automatic cookie bootstrap
+    (`GET /chat`, refreshed every 10 min or on 401/403); every call is a fresh chat, history is flattened into one
+    `user_input`; `persona="concise|normal|detailed|creative"` as a call keyword. Not the same service as `nottrack`
+    (`nottrack.com`).
+  - `apifreellm` (`apifreellm.com`): model `apifree-community`. Plain-text community endpoint, stateless single-turn,
+    ignores every option, answers in one piece (4-9 s). Limit 5 requests / 20 s / IP: llmf spaces calls 21 s apart and
+    now understands "Please wait N seconds" (provider rests N+1 s instead of a flat 60 s).
+  - Use them with `provider="notrack-ai"` / `provider="apifreellm"`; `llmf doctor` checks them.
+
+
+## 0.7.1 (retired split, see 0.7.5)
+- **Split into two packages.** `pip install llmf` is the lean core: library, CLI and the basic local `llmf serve`
+  (localhost, optional single API key, CORS, load shedding). The internet-facing features of 0.7.0 moved to the optional
+  **`llmf-serve`** package (same repo, `serve/`): `--public`, `--cloudflare`, anti-bot, rate limits / bans / IP rules, TLS,
+  `--ui`, `--html`/`--web`, `--app`, access log. Install with `pip install "llmf[serve]"`; the core delegates to it
+  automatically and prints that exact command if it is missing.
+- Extras: `llmf[serve]`, `llmf[stealth]` (`curl_cffi`), `llmf[all]`. Both packages are stdlib-only apart from `curl_cffi`;
+  no Flask. Quote the brackets in Termux/zsh.
+- Upgrading from 0.7.0: the advanced flags now need `pip install "llmf[serve]"`; everything else is unchanged.
+- CI tests the core alone and core + serve; `publish.yml` publishes `llmf` first, then `llmf-serve`
+  (a Trusted Publisher must be added on PyPI for both projects).
+
 ## 0.7.0
 - Catalogue: removed `ovh/Mistral-Nemo-Instruct-2407`, `kilo-openrouter/liquid/lfm-2.5-2.6b:free` and
   `kilo-openrouter/poolside/laguna-s-2.1:free` (404 in the latest real-network `doctor`, 0/3 alive).

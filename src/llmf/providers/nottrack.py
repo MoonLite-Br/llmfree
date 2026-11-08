@@ -42,7 +42,7 @@ class NotTrackAdapter(Adapter):
     def _events(self, spec, model, resp) -> Iterator[str]:
         """Yield text pieces; a blank line is added when the speaker changes."""
         speaker: Optional[str] = None
-        for raw in resp:
+        for raw in _http.iter_lines(resp):
             line = raw.decode("utf-8", "replace").strip()
             if not line.startswith("data:"):
                 continue

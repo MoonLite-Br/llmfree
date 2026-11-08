@@ -7,6 +7,8 @@ third-party servers you did not choose - use only for non-sensitive prompts.
 from __future__ import annotations
 
 import json
+import ipaddress
+import re
 from typing import Any, List
 from urllib.parse import urlparse
 
@@ -33,6 +35,28 @@ def _chat_url(url: str) -> str:
     return url if url.endswith("/chat/completions") else url + "/chat/completions"
 
 
+_HOST = re.compile(r"^[A-Za-z0-9.\-]{1,100}$")
+
+
+def _public_http_url(url: str) -> bool:
+    """Only http(s) endpoints on a public host: a stranger's listing must not aim llmf at your LAN / localhost."""
+    try:
+        parts = urlparse(url)
+        host = (parts.hostname or "").lower()
+        port = parts.port
+    except ValueError:
+        return False
+    if parts.scheme not in ("http", "https") or not host or not _HOST.match(host) or parts.username:
+        return False
+    if host == "localhost" or host.endswith((".localhost", ".local", ".internal", ".lan", ".home")):
+        return False
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        return port is None or 0 < port < 65536
+    return ip.is_global
+
+
 def fetch_specs(timeout: float = 20.0, user_agent: str = _http.DEFAULT_UA,
                 url: str = STILLWORKS_URL, proxy=None) -> List[ProviderSpec]:
     resp = _http.open_url(url, headers={"User-Agent": user_agent, "Accept": "application/json"},
@@ -48,6 +72,8 @@ def fetch_specs(timeout: float = 20.0, user_agent: str = _http.DEFAULT_UA,
         if not base or not model or str(r.get("auth", "none")).lower() != "none":
             continue
         full = _chat_url(str(base))
+        if not _public_http_url(full) or not re.match(r"^[A-Za-z0-9][A-Za-z0-9_.:/@+\-]{0,127}$", str(model)):
+            continue
         if (full, model) in seen:
             continue
         seen.add((full, model))

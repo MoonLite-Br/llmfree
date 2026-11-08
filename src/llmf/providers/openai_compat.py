@@ -98,7 +98,7 @@ class OpenAIAdapter(Adapter):
             resp = self._open(spec, url, headers, data, timeout, opts)
         try:
             splitter = ThinkSplitter()
-            lines = iter(resp)
+            lines = _http.iter_lines(resp)
             first: Optional[str] = None
             for raw in lines:
                 first = raw.decode("utf-8", "replace").strip()

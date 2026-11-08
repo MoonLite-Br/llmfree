@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import threading
 import time
+from urllib.parse import quote
 from typing import Any, Dict, Optional
 
 from . import _http
@@ -66,7 +67,7 @@ def _guest_token(backend: str, timeout: float, proxy: Optional[str], ua: str, fo
 
 
 def _final_text(obj: dict) -> str:
-    ai = [m for m in obj.get("messages", []) if isinstance(m, dict) and m.get("type") == "ai"]
+    ai = [m for m in (obj.get("messages") or []) if isinstance(m, dict) and m.get("type") == "ai"]
     if not ai:
         return ""
     content = ai[-1].get("content")
@@ -92,12 +93,12 @@ def ask_langchain_docs(question: str, *, backend: str = LANGCHAIN_BACKEND, timeo
         token = _guest_token(backend, timeout, proxy, user_agent, force=bool(attempt))
         try:
             thread = _call(backend + "/threads", token, {}, timeout, proxy, user_agent)
-            tid = thread.get("thread_id")
-            if not tid:
+            tid = thread.get("thread_id") if isinstance(thread, dict) else None
+            if not tid or not isinstance(tid, str):
                 raise ProviderError(NAME, "docs-agent", "no thread_id in response")
             body = {"assistant_id": "docs-agent",
                     "input": {"messages": [{"role": "user", "content": question}]}}
-            obj = _call("%s/threads/%s/runs/wait" % (backend, tid), token, body, timeout,
+            obj = _call("%s/threads/%s/runs/wait" % (backend, quote(tid, safe="")), token, body, timeout,
                         proxy, user_agent)
             break
         except ProviderError as e:
@@ -108,11 +109,11 @@ def ask_langchain_docs(question: str, *, backend: str = LANGCHAIN_BACKEND, timeo
     if not text:
         raise ProviderError(NAME, "docs-agent", "empty answer", status=200, code="empty")
     usage = None
-    for m in reversed(obj.get("messages", [])):
+    for m in reversed(obj.get("messages", []) if isinstance(obj, dict) else []):
         if isinstance(m, dict) and m.get("usage_metadata"):
             usage = m["usage_metadata"]
             break
     reply = DocsReply(text, provider=NAME, model="docs-agent", usage=usage,
                       latency=time.monotonic() - t0, raw=obj)
-    reply.off_topic = bool(obj.get("off_topic_query", False))
+    reply.off_topic = bool(isinstance(obj, dict) and obj.get("off_topic_query", False))
     return reply

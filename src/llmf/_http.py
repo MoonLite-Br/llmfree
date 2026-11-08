@@ -2,15 +2,17 @@
 
 from __future__ import annotations
 
-import gzip
 import http.client
 import logging
 import os
 import socket
 import ssl
+import time
 import urllib.error
 import urllib.request
-from typing import Dict, Optional
+import zlib
+from typing import Dict, Iterator, Optional
+from urllib.parse import urlsplit
 
 from ._version import __version__
 
@@ -62,14 +64,54 @@ class HTTPFailure(Exception):
         super().__init__("%s %s" % (status if status is not None else kind, body[:120]))
 
 
-def decode_body(resp) -> str:
-    data = resp.read()
+MAX_BODY = 32 * 1024 * 1024      # a chat / model-list / job answer is never this big
+MAX_LINE = 1024 * 1024           # one SSE line
+MAX_STREAM_SECONDS = 900.0       # a stream that drips forever is cut off
+
+
+def decode_body(resp, limit: int = MAX_BODY) -> str:
+    """Read a whole (small) body: refuses anything larger than ``limit`` bytes, also after gunzip."""
+    data = resp.read(limit + 1)
+    if len(data) > limit:
+        raise HTTPFailure(None, "response larger than %d MB" % (limit // 1048576), "network")
     if resp.headers.get("Content-Encoding", "").lower() == "gzip":
         try:
-            data = gzip.decompress(data)
-        except OSError:
+            d = zlib.decompressobj(16 + zlib.MAX_WBITS)
+            out = d.decompress(data, limit + 1)
+            if len(out) > limit or d.unconsumed_tail:
+                raise HTTPFailure(None, "decompressed response larger than %d MB" % (limit // 1048576), "network")
+            data = out
+        except zlib.error:
             pass
     return data.decode("utf-8", "replace")
+
+
+def iter_lines(resp, *, max_line: int = MAX_LINE, max_total: int = MAX_BODY,
+               max_seconds: float = MAX_STREAM_SECONDS) -> Iterator[bytes]:
+    """Lines of a streaming body (``\\n`` kept), with caps on line size, total size and wall time."""
+    end = time.monotonic() + max_seconds
+    total = 0
+    readline = getattr(resp, "readline", None)
+    source = (iter(lambda: readline(max_line + 1), b"") if callable(readline) else iter(resp))
+    for line in source:
+        total += len(line)
+        if len(line) > max_line or total > max_total:
+            raise ConnectionError("stream line/size limit exceeded")
+        if time.monotonic() > end:
+            raise socket.timeout("stream exceeded %.0f s" % max_seconds)
+        yield line
+
+
+def redact_proxy(proxy: str) -> str:
+    """``socks5://user:secret@host:1`` -> ``socks5://user:***@host:1`` (for messages and logs)."""
+    try:
+        parts = urlsplit(proxy)
+        if parts.password:
+            netloc = parts.netloc.replace(":" + parts.password + "@", ":***@", 1)
+            return parts._replace(netloc=netloc).geturl()
+    except ValueError:
+        pass
+    return proxy
 
 
 class _ExplicitProxyHandler(urllib.request.ProxyHandler):
@@ -113,7 +155,7 @@ def check_proxy(proxy: Optional[str]) -> Optional[str]:
     if proxy and not proxy.lower().startswith(("http://", "https://", "socks4://", "socks4a://",
                                               "socks5://", "socks5h://")):
         raise ValueError("proxy must look like http://host:port, https://host:port or "
-                         "socks5://host:port (also socks5h, socks4, socks4a): %r" % proxy)
+                         "socks5://host:port (also socks5h, socks4, socks4a): %r" % redact_proxy(proxy))
     if proxy and proxy.lower().startswith("socks"):
         from . import _socks
 
@@ -131,6 +173,8 @@ def open_url(
     opener: Optional[urllib.request.OpenerDirector] = None,
 ):
     """Open ``url`` and return the response object (caller must close it)."""
+    if urlsplit(url).scheme.lower() not in ("http", "https"):     # never file://, ftp://, ...
+        raise HTTPFailure(None, "refusing a non-http(s) URL", "network")
     mode = _transport["mode"]
     if opener is None and mode != "urllib" and not _transport["broken"]:
         from . import _curl

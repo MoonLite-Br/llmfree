@@ -21,7 +21,7 @@ usage: llmf [options] "question"            ask once (also reads stdin)
        llmf doctor [--all]                  call every model once and report (alias of `models check`)
        llmf providers | health              endpoints / quick ping
        llmf serve [--port N] [--public|--cloudflare] [--ui] [--html F] [--app CMD]
-                                            OpenAI-compatible server (see `llmf --help` for all flags)
+                                            OpenAI-compatible server
 """
 
 
@@ -36,6 +36,8 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--image", action="append", default=[], help="image path/URL (repeatable)")
     p.add_argument("--max-tokens", type=int)
     p.add_argument("-t", "--temperature", type=float)
+    p.add_argument("--persona", choices=("concise", "normal", "detailed", "creative"),
+                   help="notrack-ai only: answer style")
     p.add_argument("--stream", action="store_true", help="print the answer as it arrives")
     p.add_argument("--json", action="store_true", help="machine-readable output")
     p.add_argument("--live", action="store_true", help="models: also query providers live")
@@ -71,7 +73,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--app-dir", help="serve: working directory for --app")
     p.add_argument("--rate", type=float, help="serve: requests/min per API key (public default 120)")
     p.add_argument("--ip-rate", type=float, help="serve: requests/min per client IP (public default 240)")
-    p.add_argument("--session-rate", type=float, default=12, help="serve: chats/min per web visitor (default 12)")
+    p.add_argument("--session-rate", type=float, default=None, help="serve: chats/min per web visitor (default 12)")
     p.add_argument("--allow-ip", action="append", help="serve: only accept these IPs/CIDRs (repeatable)")
     p.add_argument("--deny-ip", action="append", help="serve: reject these IPs/CIDRs (repeatable)")
     p.add_argument("--trust-proxy", action="store_true", help="serve: trust CF-Connecting-IP/X-Forwarded-For from a local proxy")
@@ -83,7 +85,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--log-file", help="serve: JSON-lines access log ('-' = stderr); prompts are never logged")
     p.add_argument("--csp", help="serve: Content-Security-Policy header for every response")
     p.add_argument("--antibot", choices=("pow", "turnstile", "off"), help="serve: web visitor check (public default pow)")
-    p.add_argument("--pow-bits", type=int, default=16, help="serve: proof-of-work difficulty (default 16 bits)")
+    p.add_argument("--pow-bits", type=int, default=None, help="serve: proof-of-work difficulty (default 16 bits)")
     p.add_argument("--turnstile-secret", help="serve: Cloudflare Turnstile secret key")
     p.add_argument("--turnstile-sitekey", help="serve: Cloudflare Turnstile site key")
     p.add_argument("--cors", action="store_true", help="serve: allow browser (CORS) access")
@@ -104,6 +106,8 @@ def _ask(a, prompt, history: Optional[List[dict]] = None) -> str:
               temperature=a.temperature, race=a.race)
     if a.race:
         kw["race"] = a.race
+    if a.persona:
+        kw["persona"] = a.persona
     if a.image:
         kw["images"] = a.image
     msgs = (history or []) + [{"role": "user", "content": prompt}]
@@ -286,18 +290,20 @@ def main(argv: Optional[List[str]] = None) -> int:
                 host = "0.0.0.0"
             if tunnelled and not (a.web or a.app or a.ui):
                 a.ui = True
+            opts = dict(cors_origins=a.cors_origin or (), cloudflare=a.cloudflare,
+                        tunnel_token=a.tunnel_token, ui=a.ui, web=a.web, app=a.app, app_port=a.app_port,
+                        app_dir=a.app_dir, rate=a.rate, ip_rate=a.ip_rate, session_rate=a.session_rate,
+                        allow_ip=a.allow_ip or (), deny_ip=a.deny_ip or (), trust_proxy=a.trust_proxy,
+                        max_body=a.max_body, max_tokens_cap=a.max_tokens_cap, tls_cert=a.tls_cert,
+                        tls_key=a.tls_key, log_file=a.log_file, csp=a.csp, antibot=a.antibot,
+                        pow_bits=a.pow_bits, turnstile_secret=a.turnstile_secret,
+                        turnstile_sitekey=a.turnstile_sitekey, public=public)
+            opts = {k: v for k, v in opts.items() if v not in (None, False, (), [])}
             try:
-                serve(c, host, a.port, api_key=keys or None, cors=a.cors, cors_origins=a.cors_origin or (),
+                serve(c, host, a.port, api_key=keys or None, cors=a.cors,
                       strict_models=a.strict_models, fallback=not a.no_fallback,
-                      max_concurrent=a.max_concurrent, public=public, cloudflare=a.cloudflare,
-                      tunnel_token=a.tunnel_token, ui=a.ui, web=a.web, app=a.app, app_port=a.app_port,
-                      app_dir=a.app_dir, rate=a.rate, ip_rate=a.ip_rate, session_rate=a.session_rate,
-                      allow_ip=a.allow_ip or (), deny_ip=a.deny_ip or (), trust_proxy=a.trust_proxy,
-                      max_body=a.max_body, max_tokens_cap=a.max_tokens_cap, tls_cert=a.tls_cert,
-                      tls_key=a.tls_key, log_file=a.log_file, csp=a.csp, antibot=a.antibot,
-                      pow_bits=a.pow_bits, turnstile_secret=a.turnstile_secret,
-                      turnstile_sitekey=a.turnstile_sitekey)
-            except ValueError as e:
+                      max_concurrent=a.max_concurrent, **opts)
+            except (ValueError, RuntimeError) as e:     # bad flag value / optional package missing
                 print("error: %s" % e, file=sys.stderr)
                 return 2
             except OSError as e:          # includes socket.gaierror (bad host) and "address in use"

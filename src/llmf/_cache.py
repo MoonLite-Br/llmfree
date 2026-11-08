@@ -98,3 +98,43 @@ def rate(history: str) -> Optional[float]:
 def unreliable(history: str) -> bool:
     """Enough samples and a low success rate."""
     return len(history) >= MIN_SAMPLES and history.count("1") / len(history) < MIN_RATE
+
+
+# --- pacing across processes: `llmf ask` twice in a row must still respect a provider's minimum gap
+PACE_MIN_INTERVAL = 5.0      # only providers with a gap this long are tracked (a file write per call otherwise)
+
+
+def pace_last(directory: Optional[str], provider: str) -> Optional[float]:
+    """Wall-clock time (epoch seconds) of the last reserved slot for ``provider``, if recorded."""
+    if not directory:
+        return None
+    try:
+        with open(os.path.join(directory, "pace.json"), encoding="utf-8") as f:
+            v = json.load(f).get(provider)
+        return float(v) if isinstance(v, (int, float)) and v == v and abs(v) != float("inf") else None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
+def pace_set(directory: Optional[str], provider: str, when: float) -> None:
+    if not directory:
+        return
+    try:
+        os.makedirs(directory, exist_ok=True)
+        path = os.path.join(directory, "pace.json")
+        try:
+            with open(path, encoding="utf-8") as f:
+                data = json.load(f)
+            if not isinstance(data, dict):
+                data = {}
+        except (OSError, ValueError):
+            data = {}
+        cutoff = time.time() - 3600
+        data = {k: v for k, v in data.items() if isinstance(v, (int, float)) and v > cutoff}
+        data[provider] = when
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".pace-")
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f)
+        os.replace(tmp, path)
+    except OSError:
+        pass

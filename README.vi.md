@@ -13,8 +13,10 @@
 </div>
 
 ```bash
-pip install -U llmf
+pip install -U llmf                  # đủ mọi thứ: thư viện, CLI, server cục bộ + ra internet (chỉ stdlib)
+pip install -U "llmf[stealth]"       # tuỳ chọn: + curl_cffi (dấu vân tay TLS giống trình duyệt)
 ```
+Một gói duy nhất, không Flask. Nhớ đặt trong dấu nháy khi dùng Termux/zsh.
 ```python
 import llmf
 print(llmf.chat("Thủ đô của Việt Nam là gì?"))
@@ -65,6 +67,8 @@ Kết quả `doctor` lưu ở `~/.cache/llmf/`. `python live_test.py` chạy ~60
 
 ## `llmf serve`
 
+> Mọi cờ (`--public`, `--cloudflare`, `--ui`, `--html`, `--app`, anti-bot, TLS...) đều có sẵn sau `pip install llmf`, không cần cài thêm gói nào.
+
 ```bash
 llmf serve                                                    # http://127.0.0.1:8000/v1, chỉ cục bộ
 llmf serve --cloudflare --ui                                  # web chat công khai (cần `cloudflared`: Termux `pkg install cloudflared`)
@@ -107,12 +111,12 @@ Script tự giải proof-of-work và giữ token phiên ngắn hạn: **API key 
 
 ## Nhà cung cấp
 
-Thứ tự fallback: `ch-at → rewind-ai → ovh → kilo-openrouter → freeai → chatjimmy → kilo-gateway → pollinations → llm7 → blockrun → chatai` (`nottrack` chỉ khi chỉ định). Xem bảng chi tiết ở [README.md](README.md#providers) hoặc chạy `llmf providers` / `llmf models`.
+Thứ tự fallback: `ch-at → rewind-ai → ovh → kilo-openrouter → freeai → chatjimmy → kilo-gateway → pollinations → llm7 → blockrun → chatai` (`nottrack`, `notrack-ai`, `apifreellm` chỉ khi chỉ định). Xem bảng chi tiết ở [README.md](README.md#providers) hoặc chạy `llmf providers` / `llmf models`.
 
 ## Phát triển
 
 ```bash
 git clone https://github.com/MoonLite-Br/llmfree && cd llmfree
-python -m unittest discover -s tests -v
+pip install -e .
 ```
 Xem [CHANGELOG.md](CHANGELOG.md). MIT © 2026 Html / MoonLite-Br

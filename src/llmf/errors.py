@@ -6,6 +6,14 @@ import re
 from typing import List, Optional
 
 
+_CONTROL = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def clean_text(text: object, limit: int = 400) -> str:
+    """Remote text made safe to print: no control / escape characters, bounded length."""
+    return _CONTROL.sub("", str(text))[:limit]
+
+
 class LLMFError(Exception):
     """Base class for every error raised by llmf."""
 
@@ -38,7 +46,7 @@ class ProviderError(LLMFError):
     ) -> None:
         self.provider = provider
         self.model = model
-        self.message = message
+        self.message = message = clean_text(message)
         self.status = status
         self.code = code
         self.retryable, self.scope, self.cooldown = _classify(status, code, message)
@@ -65,7 +73,7 @@ _CAPACITY_HINTS = ("resourceexhausted", "resource exhausted", "resource_exhauste
 
 
 def _retry_after(text):
-    m = re.search(r"retry (?:after|in)\s+(\d+(?:\.\d+)?)\s*(?:second|sec|s\b)", text)
+    m = re.search(r"(?:retry (?:after|in)|please wait)\s+(\d+(?:\.\d+)?)\s*(?:second|sec|s\b)", text)
     return float(m.group(1)) if m else None
 
 

@@ -1,6 +1,6 @@
 name: Publish to PyPI
-# Uses PyPI "Trusted Publishing" (no token needed): on PyPI add a pending publisher
-# for this repo, workflow "publish.yml", environment "pypi".
+# Trusted Publishing (no token). On PyPI the project `llmf` needs one publisher:
+#   owner MoonLite-Br, repo llmfree, workflow publish.yml, environment pypi
 on:
   release:
     types: [published]
